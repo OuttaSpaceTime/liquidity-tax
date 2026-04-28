@@ -13,6 +13,9 @@
 | CoinTaxman | Python | 4/5 | 3/5 | 4/5 | 5/5 | 4/5 | Only German section 23 FIFO reference; AGPL blocks direct copy |
 | rp2 | Python | 4/5 | 3/5 | 5/5 | 2/5 | 3/5 | Gold-standard FIFO lot-matching algorithm for Phase 3 tax engine |
 | turbos-clmm-sdk | TS | 4/5 | 4/5 | 3/5 | 4/5 | 5/5 | npm dep for state snapshots + fee math; zero historical event decoding |
+| kit | TS | 4/5 | 5/5 | 5/5 | 4/5 | 5/5 | Solana Web3.js v2 — required by new Whirlpool SDK; lazy-composable RPC + codecs, tree-shakable |
+| naviprotocol-monorepo | TS | 3/5 | 3/5 | 4/5 | 4/5 | 5/5 | NEW canonical `@naviprotocol/lending` (supersedes navi-sdk); dynamic `getConfig()` + types, no event parsing |
+| turbos-sui-move-interface | Move | 3/5 | 2/5 | 3/5 | 5/5 | 4/5 | Canonical Turbos package ID + entry function signatures; bodies abstracted, events must be bytecode-bootstrapped |
 | sui-events-indexer | TS | 4/5 | 3/5 | 5/5 | 4/5 | 2/5 | Run once per protocol to auto-generate TS event types from bytecode |
 | rotki | Python | 3.5/5 | 2/5 | 5/5 | 3/5 | 4/5 | Best-in-class EVM decoder architecture; AGPL, no Sui, limited Solana |
 | aave-v3-core | Solidity | 4/5 | 3/5 | 5/5 | 5/5 | 3/5 | Source of truth for Pool event ABIs and scaled-balance semantics |
@@ -25,7 +28,7 @@
 | uni-v3-position-tracker | TS | 2/5 | 2/5 | 3/5 | 2/5 | 1/5 | GraphQL query shape + fee formula reference; buggy branches, dormant |
 | ethereum-etl | Python | 2/5 | 2/5 | 3/5 | 2/5 | 4/5 | Block-level ETL; wrong granularity for wallet-scoped tax use |
 | solana-etl | Rust | 2/5 | 1/5 | 2/5 | 1/5 | 3/5 | Block-level ETL for Solana; ignore entirely |
-| navi-sdk | TS | 2/5 | 2/5 | 2/5 | 3/5 | 4/5 | Address constants + pool configs only; zero event decoding |
+| navi-sdk | TS | 2/5 | 1/5 | 2/5 | 3/5 | 2/5 | **Deprecated** — use naviprotocol-monorepo instead. Kept only for historical constant cross-check |
 | weaverfi | TS | 1/5 | 1/5 | 2/5 | 1/5 | 1/5 | Dead EVM-only portfolio tracker; skip |
 | sui-tx-explainer | TS | 1/5 | 1/5 | 2/5 | 2/5 | 1/5 | Shallow generic explainer; Sui SDK docs are more useful |
 
@@ -185,6 +188,12 @@
 - **How:** Use as npm dep (`@orca-so/whirlpools`). Source-available license.
 - **Priority:** must-have
 
+#### From kit (@solana/kit) -- RPC transport + versioned-tx + LUT resolution
+- **File:** `packages/kit/src/index.ts` (facade), `packages/rpc/`, `packages/transaction-messages/` (esp. `decompileTransactionMessageFetchingLookupTables`)
+- **What:** Solana Web3.js v2: tree-shakable functional API. `getSignaturesForAddress` + `getTransaction` with cursor pagination; first-class versioned transaction + address-lookup-table resolution; composable codecs (compatible with Codama-generated codecs shipped by `@orca-so/whirlpools` v7).
+- **How:** Use as npm dep (`@solana/kit`). MIT. Wrap the transport for rate-limit/backoff/LUT-cache. **Required by the new Whirlpool SDK** — so Web3.js v1 is not a viable path for greenfield code.
+- **Priority:** must-have
+
 #### From solana-tx-parser-public -- CPI flattener + IDL decoder
 - **File:** `src/helpers.ts` (`flattenTransactionResponse`), `src/parsers.ts` (`SolanaParser`)
 - **What:** Flattens inner instructions into ordered list; decodes Anchor instructions given an IDL; parses program logs
@@ -217,10 +226,22 @@
 - **How:** Use as npm dep (`turbos-clmm-sdk`). MIT.
 - **Priority:** must-have
 
-#### From navi-sdk -- Pool configs + address constants
-- **File:** `src/address.ts`
-- **What:** Complete mapping of Navi pool configs: package IDs, pool IDs, coin types, reserve/supply/borrow object IDs for ~30 tokens
-- **How:** Use as npm dep or copy address constants. Apache 2.0.
+#### From naviprotocol-monorepo -- Dynamic config + pool metadata
+- **File:** `packages/lending/src/config.ts` (`getConfig()`), `packages/lending/src/pool.ts` (`getPools()`)
+- **What:** `getConfig({ env: 'prod' })` fetches package/storage/incentiveV3 IDs + oracle feeds from `open-api.naviprotocol.io` at runtime. `getPools()` returns full pool metadata (coin types, decimals, reserve/supply/borrow object IDs) for all supported assets across markets (main, ember, ...).
+- **How:** Use as npm dep (`@naviprotocol/lending`). MIT. Cache config on startup (5min TTL). **Supersedes old navi-sdk static address table.**
+- **Priority:** must-have
+
+#### From naviprotocol-monorepo -- Type definitions for rewards/positions
+- **File:** `packages/lending/src/types.ts`
+- **What:** `LendingReward`, `Pool`, `LendingConfig`, `UserLendingInfo` type shapes. `getUserClaimedRewardHistory()` as cross-check option for on-chain reward event parsing.
+- **How:** Import types directly from the package. MIT.
+- **Priority:** must-have
+
+#### From turbos-sui-move-interface -- Canonical package ID + entry function targets
+- **File:** `clmm/sources/position_manager.move`, `clmm/sources/swap_router.move`
+- **What:** Canonical mainnet package `0x91bfbc386a41afcfd9b2533058d7e915a1d3829089cc268ff4333d54d6339ca1` (published `0xa5a0...1e64`). Entry function signatures (`position_manager::mint`, `::increase_liquidity`, `::decrease_liquidity`, `::collect`, `::collect_reward`, `::burn`, `swap_router::*`) for PTB target-string classification. Pool/Position/Tick struct field names.
+- **How:** Hardcode package ID. Transcribe entry function list as a Move-call classifier map. Use sui-events-indexer against the package for actual event struct discovery (bodies in this repo are abstracted).
 - **Priority:** must-have
 
 ### Price cache
@@ -378,9 +399,9 @@ Reasoning: The matrix approach (rotki) is proven to handle edge cases (e.g., TRA
 | Uniswap V3 (Base) | rotki V3 decoder + v3-subgraph ABIs + v3-periphery `LiquidityAmounts.sol` | **High** | Handler shell, Aerodrome address config. Rotki's Python decoder is a complete edge-case reference; ABIs drop into viem. Missing: our own tx enumeration per wallet via `getLogs`, position-to-tax-event classification, USD pricing at event time. |
 | Aerodrome (Base) | rotki Aerodrome decoder (51 lines inheriting Velodrome 569 lines) | **High** | Gauge reward handling (distinct from LP fees). Slipstream NPM is a V3 fork -- same event signatures, different address. Our handler extends the Uni V3 base class. Missing: gauge staking events, veAERO rewards classification. |
 | Aave V3 (Base) | aave-utilities (`formatUserSummary`) + aave-v3-core events + rotki Aave decoder | **High** | Historical event enumeration from Pool contract logs (Supply, Withdraw, Borrow, Repay, LiquidationCall). aave-utilities handles current-state snapshots. Missing: interest income computation from scaled-balance deltas, reward claim decoding from RewardsController, integration with ethers v5 alongside viem. |
-| Orca Whirlpools (Solana) | whirlpools SDK + solana-tx-parser + staketaxcsv `handle_orca.py` (swaps only) | **Medium** | CLMM-specific event classification: openPosition, increaseLiquidity, decreaseLiquidity, collectFees, collectRewards, closePosition. Pairing each instruction with sibling SPL token transfers for amount extraction. Position-NFT lifecycle tracking. Compound detection (collectFees followed by increaseLiquidity). staketaxcsv handles classic swaps only, not CLMM. |
-| Turbos CLMM (Sui) | turbos-clmm-sdk (state reads + Move call targets) + sui-events-indexer (type generation) | **Low** | Complete event-based historical tx decoder. SDK provides no event parsing. Must: discover all Turbos event types (via sui-events-indexer), build Move-call classifier (`position_manager::mint` -> OpenPosition, etc.), extract amounts from events or `balanceChanges`, position lifecycle tracking. |
-| Navi lending (Sui) | navi-sdk (address constants only) | **Low** | Everything: event type discovery (Navi Move source NOT in repos -- must use bytecode disassembly via sui-events-indexer), deposit/borrow/repay/liquidate/claim_reward event parsing, haSUI looping pattern detection (deposit haSUI -> borrow SUI -> stake -> repeat), ctoken-to-actual amount conversion using supply indexes. |
+| Orca Whirlpools (Solana) | whirlpools SDK + kit (RPC/LUT/codecs) + solana-tx-parser + staketaxcsv `handle_orca.py` (swaps only) | **Medium** | CLMM-specific event classification: openPosition, increaseLiquidity, decreaseLiquidity, collectFees, collectRewards, closePosition. Pairing each instruction with sibling SPL token transfers for amount extraction. Position-NFT lifecycle tracking. Compound detection (collectFees followed by increaseLiquidity). staketaxcsv handles classic swaps only, not CLMM. **Kit is the required v2 transport layer**; solana-tx-parser-public provides CPI flattening on top. |
+| Turbos CLMM (Sui) | turbos-clmm-sdk (state reads + Move call targets) + turbos-sui-move-interface (canonical package ID + entry functions + struct field names) + sui-events-indexer (type generation) | **Low-Medium** | Package ID + entry function list + Pool/Position/Tick struct shapes now known from turbos-sui-move-interface (bodies abstracted but signatures authoritative). Still must: discover event struct field names (via sui-events-indexer against the package), extract amounts from events or `balanceChanges`, position lifecycle tracking across mint→add/collect*→remove→burn. |
+| Navi lending (Sui) | naviprotocol-monorepo (`@naviprotocol/lending`: dynamic config, pool metadata, reward types, reward-history HTTP API) + sui-events-indexer | **Low-Medium** | Config/pools/reward types and claimed-reward history now available via the new SDK. Must still build: on-chain event type discovery (package ID from `getConfig()`, bytecode bootstrap via sui-events-indexer), deposit/borrow/repay/liquidate/claim_reward event parsing, haSUI looping detection (deposit haSUI → borrow SUI → stake → repeat), ctoken-to-actual amount conversion using supply indexes. Old navi-sdk downgraded to cross-check only. |
 | Suilend (Sui) | suilend Move source (event struct defs) + sui-events-indexer | **Low-Medium** | Event struct definitions are known (9 event types with clear fields). Must build: the complete TypeScript client, event query + cursor walking, event-to-tax-action mapping, ctoken amount conversion, ClaimRewardEvent handling, package ID discovery on mainnet. |
 | Koinly CSV export | staketaxcsv exporter (`ExporterTypes.py:386-412`, `Exporter.py:942-964`) | **High** | Column layout and label mapping are copy-paste from staketaxcsv. Must write: our own event-to-Row mapper that handles CLMM-specific types (no prior art for how to map `lp_fee_harvest` or `lp_compound` to Koinly labels). |
 | German section 23 tax math | CoinTaxman (`taxman.py:281`) + rotki (`cost_basis/base.py:185-293`) | **Medium** | Phase 3 scope. Two AGPL references exist; must clean-room reimplement. Must add: FIFO lot queue (port from rp2, Apache 2.0), one-year Haltefrist check, cross-chain transfer linking, per-lot taxable/tax-free split. No repo handles CLMM position lots (deposit USDC+SOL as two lots? as one position lot?). |

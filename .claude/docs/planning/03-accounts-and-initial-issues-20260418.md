@@ -31,9 +31,10 @@
 
 **[0.1] Create repo scaffolding & SQLite schema**
 - Labels: `phase-0`, `infra`
-- TypeScript project (tsconfig, ESLint, Prettier), SQLite with canonical schema: `raw_txs`, `events`, `positions`, `prices`, `unclassified`, `rules`, `transfer_links`. Wallet-address config. Copy Koinly CSV column layout from `staketaxcsv/common/ExporterTypes.py:386-412`.
-- Done when: `src/`, `db/schema.sql`, `config/wallets.ts` exist; `npm run build` succeeds; schema matches `_synthesis.md`.
+- TypeScript project (tsconfig, ESLint, Prettier). **Stack: `better-sqlite3` + `drizzle-orm` + `drizzle-kit` for migrations.** Schema defined in `db/schema.ts` as Drizzle tables (not raw SQL) so `TaxEvent` types flow end-to-end and agent-authored queries are compile-checked. Tables: `raw_txs`, `events`, `positions`, `prices`, `unclassified`, `rules`, `transfer_links`. Migrations generated via `drizzle-kit generate` → `db/migrations/NNNN_*.sql`. JSON columns typed via `.$type<T>()`. BigInt columns use `mode: 'bigint'`. Wallet-address config in `config/wallets.ts`. Copy Koinly CSV column layout from `staketaxcsv/common/ExporterTypes.py:386-412`.
+- Done when: `src/`, `db/schema.ts`, `config/wallets.ts`, `.env.example` exist; `npm run build` succeeds; `drizzle-kit generate` produces a clean initial migration; schema matches `_synthesis.md`.
 - Depends on: —
+- **2026-04-19 decision:** Chose Drizzle over raw SQL (rotki/perfi pattern) despite the prior-art survey recommending raw SQL. Reason: agent-assisted development benefits from typed schema + autocomplete far more than a solo human would; the productivity delta for AI-authored code outweighs the "minimalism" ethos. No `CASCADE` on `raw_txs → events` — hand-labeled data must survive re-ingests.
 
 **[0.2] Define canonical `TaxEvent` type + valid type×subtype matrix**
 - Labels: `phase-0`, `schema`, `decoder-core`
@@ -73,11 +74,12 @@
 - Done when: Slipstream events decode; AERO rewards labeled `lp_reward`; shared base class extracted.
 - Depends on: [1A.3]
 
-**[1A.5] Aave V3 handler (Base, ethers v5 isolated)**
-- Labels: `phase-1a-base`, `handler`, `risk`
-- Decode `Supply` / `Withdraw` / `Borrow` / `Repay` / `LiquidationCall`. Use `aave-utilities` for position snapshots in an **isolated ethers v5 module**. Compute interest from scaled-balance deltas.
-- Done when: 5 Base Aave txs decode; ethers v5 confined to one module; no cross-contamination with viem.
+**[1A.5] Aave V3 handler (Base, viem-native via `@aave/client`)**
+- Labels: `phase-1a-base`, `handler`
+- Decode `Supply` / `Withdraw` / `Borrow` / `Repay` / `LiquidationCall`. Use **`@aave/client` (AaveKit TypeScript)** — viem-first successor to the deprecated `aave-utilities`; no ethers v5 quarantine needed. Compute interest from scaled-balance deltas in event data (RAY 1e27 fixed-point); fall back to hand-rolled math if `@aave/client` lacks historical reads. Addresses via `@bgd-labs/aave-address-book`.
+- Done when: 5 Base Aave txs decode; no ethers dependency anywhere in the tree.
 - Depends on: [1A.1], [0.3]
+- **2026-04-19 research update:** aave-utilities is the deprecated path (ethers.js). Canonical modern SDK is `@aave/client`, modeled on viem's actions architecture, supports viem/ethers v6/Privy/thirdweb/Turnkey. This removes doc 01 gap #5 (viem+ethers dual-provider hazard) from scope.
 
 **[1A.6] Base golden-fixture tests**
 - Labels: `phase-1a-base`, `test-fixtures`
