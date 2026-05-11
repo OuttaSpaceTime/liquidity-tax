@@ -5,7 +5,7 @@ export default defineConfig({
   schema: './db/schema.ts',
   out: './db/migrations',
   dbCredentials: {
-    url: process.env.DB_PATH ?? 'data/liquidity-tax.db',
+    url: `file:${process.env.DB_PATH ?? 'data/liquidity-tax.db'}`,
   },
   verbose: true,
   strict: true,
