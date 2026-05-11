@@ -56,3 +56,41 @@ Key repos to know:
 ## Global rule reminder
 
 Per `~/.claude/CLAUDE.md`: test-first. For any non-trivial change (and especially bug fixes), write a failing test first, then fix. For this project, the test corpus is hand-labeled real on-chain txs under `tests/fixtures/`, not synthetic mocks.
+
+## Project baseline
+
+Runtime: **Bun**. Run TypeScript files directly with `bun <file.ts>`.
+
+Key dependencies (see `package.json`):
+- `drizzle-orm` + `drizzle-kit` — ORM, query builder, migration generator, Drizzle Studio.
+- `zod` — env and config validation.
+- ESLint + Prettier — lint and format. Tests run via `bun test` (Bun's built-in test runner).
+
+Database: SQLite at `data/liquidity-tax.db` (overridable via `DB_PATH` env var). Driver: Bun's built-in `bun:sqlite` — no native module compilation required.
+
+## Verification
+
+Single gate command — run before every commit:
+
+    bun run check   # tsc --noEmit && eslint . && bun test
+
+After any `db/schema.ts` change:
+
+    bun run db:generate   # regenerate migration SQL from schema
+    bun run db:migrate    # apply to local SQLite
+
+Full fresh-setup (clone to working DB):
+
+    bun install
+    cp .env.example .env   # fill in API keys
+    bun run db:migrate
+    bun run check          # must pass before any implementation work
+
+## Privacy guard
+
+**Never read `.env` or `config/wallets.ts`.** These files are blocked at the permission layer via `.claude/settings.json` (`permissions.deny` entries for both `Read` and `Bash` tool paths). The block is enforced before any tool executes — it is not convention.
+
+- `.env` — API keys (Helius, Alchemy, CoinGecko, Sui RPC). Gitignored.
+- `config/wallets.ts` — real wallet addresses.
+
+To reference an env var in code, use `env` or `requireEnv()` from `src/config/env.ts`. Never access `process.env` for API keys outside that module.

@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./config/wallets.ts)",
+      "Bash(cat .env*)",
+      "Bash(grep * .env)",
+      "Bash(grep * .env*)",
+      "Bash(cat config/wallets.ts)",
+      "Bash(grep * config/wallets.ts)"
+    ]
+  }
+}
