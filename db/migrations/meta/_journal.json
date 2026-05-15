@@ -8,6 +8,13 @@
       "when": 1778398827090,
       "tag": "0000_living_owl",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1778829360788,
+      "tag": "0001_cuddly_rhino",
+      "breakpoints": true
     }
   ]
 }

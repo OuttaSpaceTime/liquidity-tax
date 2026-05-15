@@ -110,13 +110,20 @@ export const rules = sqliteTable('rules', {
 });
 
 // transfer_links — no FK references; events.id is surrogate.
-export const transferLinks = sqliteTable('transfer_links', {
-  id:         integer('id').primaryKey({ autoIncrement: true }),
-  outEventId: integer('out_event_id').notNull(),
-  inEventId:  integer('in_event_id').notNull(),
-  confidence: real('confidence').notNull(),
-  status:     text('status', { enum: ['pending', 'confirmed', 'rejected'] })
-                .notNull()
-                .default('pending'),
-  heuristic:  text('heuristic').notNull(),
-});
+export const transferLinks = sqliteTable(
+  'transfer_links',
+  {
+    id:         integer('id').primaryKey({ autoIncrement: true }),
+    outEventId: integer('out_event_id').notNull(),
+    inEventId:  integer('in_event_id').notNull(),
+    confidence: real('confidence').notNull(),
+    status:     text('status', { enum: ['pending', 'confirmed', 'rejected'] })
+                  .notNull()
+                  .default('pending'),
+    heuristic:  text('heuristic').notNull(),
+  },
+  (t) => ({
+    byOutEvent: index('transfer_links_by_out_event').on(t.outEventId),
+    byInEvent:  index('transfer_links_by_in_event').on(t.inEventId),
+  }),
+);
