@@ -8,6 +8,7 @@ import {
   index,
   unique,
 } from 'drizzle-orm/sqlite-core';
+import type { TaxEventType } from '../src/types/event';
 
 // raw_txs — source of truth.
 export const rawTxs = sqliteTable(
@@ -34,8 +35,8 @@ export const events = sqliteTable(
     emissionSeq:    integer('emission_seq').notNull().default(0),
     timestamp:      integer('timestamp').notNull(),
     wallet:         text('wallet').notNull(),
-    type:           text('type').notNull(),
-    subtype:        text('subtype').notNull(),
+    type:           text('type').$type<TaxEventType>().notNull(),
+    subtype:        text('subtype').$type<string>().notNull(),
     sentAsset:      text('sent_asset'),
     sentAmount:     blob('sent_amount', { mode: 'bigint' }),
     receivedAsset:  text('received_asset'),
