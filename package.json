@@ -6,6 +6,7 @@
   "scripts": {
     "build": "tsc --noEmit",
     "check": "tsc --noEmit && eslint . && bun test",
+    "cli": "bun src/cli.ts",
     "test": "bun test",
     "lint": "eslint .",
     "db:generate": "drizzle-kit generate",
@@ -13,8 +14,16 @@
     "db:studio": "drizzle-kit studio"
   },
   "dependencies": {
+    "@mysten/sui": "^2.17.0",
+    "@naviprotocol/lending": "2.0.0-beta.0",
+    "@orca-so/whirlpools": "^8.0.0",
+    "@orca-so/whirlpools-core": "^3.1.0",
+    "@solana/kit": "^5.5.1",
+    "@suilend/sdk": "^3.0.4",
+    "commander": "^15.0.0",
     "dotenv": "^16",
     "drizzle-orm": "^0.45.2",
+    "viem": "^2.52.2",
     "zod": "^3.23"
   },
   "devDependencies": {

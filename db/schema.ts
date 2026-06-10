@@ -76,6 +76,7 @@ export const prices = sqliteTable(
     asset:    text('asset').notNull(),
     date:     text('date').notNull(),
     usdPrice: real('usd_price').notNull(),
+    eurPrice: real('eur_price'),
     source:   text('source').notNull(),
   },
   (t) => ({ pk: primaryKey({ columns: [t.asset, t.date] }) }),
