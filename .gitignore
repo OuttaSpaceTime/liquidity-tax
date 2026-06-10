@@ -1,6 +1,8 @@
 node_modules/
 dist/
 .env
+config/wallets.ts
+config/wallets.staged.ts
 *.db
 data/
 coverage/

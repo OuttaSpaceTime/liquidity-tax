@@ -1,10 +1,10 @@
 # CLAUDE.md — liquidity-tax
 
-DeFi tax-decoder CLI. **Planning phase — no code yet.** Code will live in this directory once Phase 0 starts.
+DeFi tax-decoder CLI. **Implementation in progress** (Phase 0 done; pipeline build started 2026-06-10 on branch `implement/pipeline`).
 
 ## What this is
 
-Headless TypeScript CLI that ingests on-chain transactions from Base (EVM), Solana, and Sui; decodes them through per-protocol handlers (Uniswap V3, Aerodrome, Aave V3, Orca Whirlpool, Turbos, Navi, Suilend); persists to local SQLite; exports a Koinly-compatible CSV for German §23 tax filing. Solo-use, no UI, no server.
+Headless TypeScript CLI that ingests on-chain transactions from Base (EVM), Solana, and Sui; decodes them through per-protocol handlers (Uniswap V3, Aerodrome incl. vfat/Sickle proxies, Aave V3, Orca Whirlpool, Turbos, Navi, Suilend); persists to local SQLite; computes German §23/§22 tax reports. Solo-use. A Next.js dashboard extension is planned (see `.claude/docs/planning/07-dashboard-extension-and-setup-20260610.md`).
 
 ## Sibling repos under `~/Code/Misc/defi-tracker/`
 
@@ -26,19 +26,14 @@ Headless TypeScript CLI that ingests on-chain transactions from Base (EVM), Sola
 ## Key decisions already made
 
 - **Language/stack:** TypeScript end-to-end + SQLite as source of truth + viem (Base) + new `@orca-so/whirlpools` SDK (Solana, Web3.js v2 path recommended) + `@naviprotocol/lending` + `turbos-clmm-sdk` + Suilend Move-source-derived types.
-- **Export target:** Koinly-compatible CSV. No tax engine in MVP (Phase 3 deferred). Column layout lifted from `staketaxcsv/common/ExporterTypes.py:386-412`.
+- **Export target (changed 2026-06-10):** Koinly CSV export **dropped** per Felix — we generate our own reports instead (German §23/§22 engine + dashboard, doc 07). GH issues #6/#10 are obsolete in their CSV form. `config/koinly-labels.ts` stays as a label vocabulary. Reference for own reports: `liquidity-sheets/tax-report-2025/` (working Python FIFO engine + Blockpit CSV pipeline).
 - **Pattern:** Three-phase dispatch (address-specific → generic → post-decode aggregation), rotki-style. Per-protocol handlers register against a central `DecoderRegistry`.
 - **Canonical event:** `TaxEvent` with `(type, subtype)` matrix (~150 valid pairs), dual-amount model (sent + received), `positionId` for CLMM lifecycle, `flags[]` for non-destructive annotation.
 - **Fallback:** unclassified txs → SQLite `unclassified` table → Ink/Inquirer TUI for manual labeling.
 
-## Open decisions (blocking issue creation)
+## Decisions — all locked (docs 05/06, do not re-litigate)
 
-1. **Sui spike timing** — before Phase 1A as go/no-go, or as task 1 of Phase 1C?
-2. **Wallet addresses** — hardcode all historical (Rabby/Coinbase/Phantom) or active only?
-3. **Test-first granularity** — per-handler fixtures (≥3 real txs before code) or per-phase bundle?
-4. **Solana stack** — Web3.js v1 (legacy Orca SDK + `solana-tx-parser-public`) vs v2 (new Orca SDK, recommended in doc 04). `[1B.0]` in doc 03.
-
-Questions 1, 5 (repo location) already answered — sibling repos under `defi-tracker/`; Koinly label default = `reward`.
+1. **Sui spike** = task 1 of Phase 1C. 2. **Wallets** = all historical, tagged active/archived. 3. **Test-first** = per handler, ≥3 hand-labeled real txs, failing test before handler code. 4. **Solana** = Web3.js v2 (`@solana/kit` + `@orca-so/whirlpools` v7). 5. Repo = sibling `liquidity-tax/`. 6. LP-deposit tax policy default = **basis carry-forward (not a disposal)**, matching Felix's filed 2025 report (`liquidity-sheets/tax-report-2025/`); configurable flag, see doc 07 §2.2.
 
 ## Reference repo paths
 
@@ -88,9 +83,8 @@ Full fresh-setup (clone to working DB):
 
 ## Privacy guard
 
-**Never read `.env` or `config/wallets.ts`.** These files are blocked at the permission layer via `.claude/settings.json` (`permissions.deny` entries for both `Read` and `Bash` tool paths). The block is enforced before any tool executes — it is not convention.
+**Never read `.env`, `config/wallets.ts`, or `config/wallets.staged.ts`.** Blocked at the permission layer via `.claude/settings.json` (`Read`, `Edit`, `Write`, and `Bash` deny entries). These files are write-once by humans; agents interact with their contents only through runtime indirection:
 
-- `.env` — API keys (Helius, Alchemy, CoinGecko, Sui RPC). Gitignored.
-- `config/wallets.ts` — real wallet addresses.
-
-To reference an env var in code, use `env` or `requireEnv()` from `src/config/env.ts`. Never access `process.env` for API keys outside that module.
+- `.env` — API keys (Helius, Alchemy, CoinGecko, Sui RPC). Gitignored. Bun auto-loads it; code uses `env`/`requireEnv()` from `src/config/env.ts`. Never access `process.env` for keys elsewhere, never echo/log key values.
+- `config/wallets.ts` (canonical) / `config/wallets.staged.ts` (pending merge) — real wallet addresses. Both gitignored and untracked. Code loads them at runtime via the wallets loader (`src/config/`), which validates the `Array<{chain, address, label, status}>` contract with zod. Refer to wallets by **label or chain** in prompts, logs, and commit messages — never paste raw addresses.
+- The SQLite DB and `tests/fixtures/` necessarily contain on-chain data (addresses, tx hashes). DB is gitignored; fixtures are committed to this **private** repo only.
