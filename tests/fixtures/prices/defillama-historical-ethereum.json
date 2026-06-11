@@ -1,0 +1,13 @@
+{
+  "status": 200,
+  "body": {
+    "coins": {
+      "coingecko:ethereum": {
+        "symbol": "ETH",
+        "price": 3352.51,
+        "timestamp": 1735776003,
+        "confidence": 0.99
+      }
+    }
+  }
+}

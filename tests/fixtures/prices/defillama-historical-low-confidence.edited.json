@@ -1,0 +1,14 @@
+{
+  "status": 200,
+  "body": {
+    "coins": {
+      "coingecko:ethereum": {
+        "symbol": "ETH",
+        "price": 3352.51,
+        "timestamp": 1735776003,
+        "confidence": 0.05
+      }
+    }
+  },
+  "_fixtureNote": "hand-edited copy of defillama-historical-ethereum.json: confidence lowered below the 0.2 threshold"
+}

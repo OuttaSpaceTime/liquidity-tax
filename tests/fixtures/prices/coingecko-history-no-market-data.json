@@ -1,0 +1,12 @@
+{
+  "status": 200,
+  "body": {
+    "id": "pump-fun",
+    "symbol": "pump",
+    "name": "Pump.fun",
+    "image": {
+      "thumb": "https://coin-images.coingecko.com/coins/images/67164/thumb/pump.jpg?1751949376",
+      "small": "https://coin-images.coingecko.com/coins/images/67164/small/pump.jpg?1751949376"
+    }
+  }
+}

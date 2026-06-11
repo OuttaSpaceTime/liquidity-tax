@@ -1,0 +1,10 @@
+{
+  "status": 404,
+  "body": {
+    "status": {
+      "timestamp": "2026-06-11T04:23:09.705Z",
+      "error_code": 10013,
+      "error_message": "coin not found"
+    }
+  }
+}
