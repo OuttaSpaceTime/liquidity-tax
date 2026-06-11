@@ -43,6 +43,11 @@ const NAVI_FIXTURES = [
   'navi-01-lst-flash-leverage-loop.json',
   'navi-02-liquidation.json',
   'navi-03-reward-claim-compound.json',
+  // Foreign tx covering the Haedal staking::UserStaked (haSUI) decode path +
+  // lending::WithdrawEvent pool-leg pairing — absent from own history (the
+  // own-wallet loop uses Volo vSUI, navi-01). No looping_pattern: collateral
+  // migration has no SUI borrow leg.
+  'navi-04-hasui-collateral-migration.json',
 ];
 
 /** Sui fixtures owned by other handlers — the Navi handler must not claim them. */
