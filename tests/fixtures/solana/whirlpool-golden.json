@@ -1,0 +1,462 @@
+{
+  "conventions": {
+    "scope": "[1B.4] hand-labeled golden fixtures for the Orca Whirlpool handler ([1B.3]). Raw txs live in raw/<txHash>.json as full raw_txs rows (jsonParsed getTransaction payload).",
+    "logIndex": "Zero-based index of the source instruction in the flattened sequence (each outer instruction followed by its inner CPI instructions, in order — mirrors flattenTransactionResponse from solana-tx-parser-public). Events derived from a Whirlpool instruction carry that instruction's flat index.",
+    "emissionSeq": "Zero-based ordinal among the events emitted for one source instruction, in inner-transfer order (token A leg before token B leg). Zero-amount legs are skipped and do not consume an ordinal.",
+    "asset": "SPL mint address verbatim (wrapped SOL = So11111111111111111111111111111111111111112; no unwrap to native SOL at handler level). Native SOL is only used by ingest-time gas events.",
+    "amounts": "Raw integer base units as decimal strings; the test parses them to bigint.",
+    "positionId": "solana:orca_whirlpool:<position PDA address>. The position PDA (not the NFT mint) is the only identifier present in every lifecycle instruction's accounts (openPosition* acct[2], increase/decreaseLiquidity acct[3], increase/decreaseLiquidity V2 acct[5], collectFees/collectReward[V2] acct[2], closePosition* acct[2]). The NFT mint derives the PDA one-way when needed (e.g. NFT transfers).",
+    "instructionMapping": {
+      "openPosition / openPositionWithMetadata / openPositionWithTokenExtensions": "one lp_deposit:open_position event, no amounts (lifecycle marker; NFT mint + rent are not principal)",
+      "increaseLiquidity / increaseLiquidityV2": "one lp_deposit:add_liquidity per non-zero token leg, sent side only",
+      "decreaseLiquidity / decreaseLiquidityV2": "one lp_withdraw:remove_liquidity per non-zero token leg, received side only",
+      "collectFees / collectFeesV2": "one lp_fee:collect per non-zero token leg, received side only",
+      "collectReward / collectRewardV2": "one lp_reward:emission_claim per non-zero leg, received side only — zero-amount reward transfers (all of this wallet's history) emit NOTHING",
+      "closePosition / closePositionWithTokenExtensions": "one lp_withdraw:close_position event, no amounts (NFT burn + rent refund are not principal)",
+      "updateFeesAndRewards": "no event (pure state update)",
+      "swap / swapV2": "one swap:trade event with both sides (sent = user->vault leg, received = vault->user leg)",
+      "twoHopSwap / twoHopSwapV2": "one swap:trade event with net sides (input of hop 1, output of hop 2); the intermediate token nets to zero and is not emitted"
+    },
+    "ephemeralWsol": "Temp WSOL accounts (createAccount + initializeAccount before, closeAccount after the Whirlpool ix) are plumbing — the handler reads amounts from the SPL transfer legs only and emits no wrap/unwrap events.",
+    "v1TransferMintResolution": "spl-token:transfer (V1 instructions) carries no mint — resolve via meta.pre/postTokenBalances account->mint mapping; transferChecked (V2) carries the mint inline.",
+    "handler": "handlerId must be 'orca_whirlpool' on every event; handlerVersion is not asserted.",
+    "notCovered": [
+      "Position NFT transfer between wallets: no position mint in this wallet's history was ever transferred; no foreign example findable without an indexer (Whirlpool program is not an account of such txs). Revisit in [1B.3]/[1D].",
+      "Non-zero collectReward: all 93 own CollectReward transfers AND ~900 sampled recent foreign Whirlpool txs have zero-amount reward transfers (emissions inactive program-wide). The zero-amount no-emit behavior is pinned by fixtures #6-#8; the non-zero path (lp_reward:emission_claim) remains unexercised.",
+      "Single-tx rebalance (decrease+collect+close+open+increase in one tx): does not occur in this history — the Orca UI rebalances as a close tx followed by an open tx (fixtures #0/#1 and #4/#5/#9 cover the pieces). Cross-tx rebalance linking is phase-3 aggregation work.",
+      "Position bundles, locked positions, repositionLiquidityV2: never used by this wallet."
+    ]
+  },
+  "fixtures": [
+    {
+      "txHash": "yXtA5G68ZcUhbEsXxjjTgGDBbrMsSXRdxT6xrakH5fLmK2T64PP6GHisBymGmzBPukiXrUufYnHs9kLmUnZtmP5",
+      "source": "own",
+      "case": "open + increase same tx (SOL/USDC, two-sided)",
+      "notes": "OpenPositionWithTokenExtensions@3 mints position NFT (PDA 6TuVg96n..., mint 8JtDVULA...); IncreaseLiquidity@21 deposits WSOL (leg @22, V1 transfer, mint via token balances) + USDC (leg @23). Ephemeral WSOL account wraps 127.956 SOL at @19, leftover unwrapped at @24.",
+      "wallet": "HT2yaxCEtvr8UMHnQb9LKZre81v7S9cKRgrqSsZ3EXd4",
+      "expectedEvents": [
+        {
+          "type": "lp_deposit",
+          "subtype": "open_position",
+          "logIndex": 3,
+          "emissionSeq": 0,
+          "timestamp": 1770324636,
+          "wallet": "HT2yaxCEtvr8UMHnQb9LKZre81v7S9cKRgrqSsZ3EXd4",
+          "positionId": "solana:orca_whirlpool:6TuVg96nuRA9EqZApcJHUJLvhDqB7utSUGrnwZSi5MHT"
+        },
+        {
+          "type": "lp_deposit",
+          "subtype": "add_liquidity",
+          "logIndex": 21,
+          "emissionSeq": 0,
+          "timestamp": 1770324636,
+          "wallet": "HT2yaxCEtvr8UMHnQb9LKZre81v7S9cKRgrqSsZ3EXd4",
+          "sentAsset": "So11111111111111111111111111111111111111112",
+          "sentAmount": "125048097292",
+          "positionId": "solana:orca_whirlpool:6TuVg96nuRA9EqZApcJHUJLvhDqB7utSUGrnwZSi5MHT"
+        },
+        {
+          "type": "lp_deposit",
+          "subtype": "add_liquidity",
+          "logIndex": 21,
+          "emissionSeq": 1,
+          "timestamp": 1770324636,
+          "wallet": "HT2yaxCEtvr8UMHnQb9LKZre81v7S9cKRgrqSsZ3EXd4",
+          "sentAsset": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+          "sentAmount": "1723844029",
+          "positionId": "solana:orca_whirlpool:6TuVg96nuRA9EqZApcJHUJLvhDqB7utSUGrnwZSi5MHT"
+        }
+      ]
+    },
+    {
+      "txHash": "wYcczFGajrdtjejo9u8KFcJiHZ2BG8FMMcA71gm6WZM2GRdhqyvuX7JQXTxWLt3BHdK6E9Gqjykw4vp6S1GwiKP",
+      "source": "own",
+      "case": "open + increaseV2 single-sided (WSOL/hSOL, token A leg is zero)",
+      "notes": "OpenPositionWithTokenExtensions@3 (PDA 2qVGGt81...); IncreaseLiquidityV2@21 with transferChecked legs: WSOL @22 amount 0 (omitted — single-sided deposit), hSOL @23. Pins the zero-leg-skip rule.",
+      "wallet": "HT2yaxCEtvr8UMHnQb9LKZre81v7S9cKRgrqSsZ3EXd4",
+      "expectedEvents": [
+        {
+          "type": "lp_deposit",
+          "subtype": "open_position",
+          "logIndex": 3,
+          "emissionSeq": 0,
+          "timestamp": 1756668841,
+          "wallet": "HT2yaxCEtvr8UMHnQb9LKZre81v7S9cKRgrqSsZ3EXd4",
+          "positionId": "solana:orca_whirlpool:2qVGGt8144MJqHhPRfHw8mqhJoufanPobg1KbpveeWny"
+        },
+        {
+          "type": "lp_deposit",
+          "subtype": "add_liquidity",
+          "logIndex": 21,
+          "emissionSeq": 0,
+          "timestamp": 1756668841,
+          "wallet": "HT2yaxCEtvr8UMHnQb9LKZre81v7S9cKRgrqSsZ3EXd4",
+          "sentAsset": "HeLp6NuQkmYB4pYWo2zYs22mESHXPQYzXbB8n4V98jwC",
+          "sentAmount": "2660524176533",
+          "positionId": "solana:orca_whirlpool:2qVGGt8144MJqHhPRfHw8mqhJoufanPobg1KbpveeWny"
+        }
+      ]
+    },
+    {
+      "txHash": "zhDAa6GLDQCkqorFQN6TZN1aKvxf3BsEnGN5sLrqg4yaPLcbkNr1UrnLc5DMtc9L8tEaarHoUJ1LcCGz3YFfGpT",
+      "source": "own",
+      "case": "increase on existing position (SOL/USDC)",
+      "notes": "Standalone IncreaseLiquidity@5 on position 7fP3EJrj... opened in an earlier tx; legs @6 WSOL (V1 transfer) and @7 USDC.",
+      "wallet": "HT2yaxCEtvr8UMHnQb9LKZre81v7S9cKRgrqSsZ3EXd4",
+      "expectedEvents": [
+        {
+          "type": "lp_deposit",
+          "subtype": "add_liquidity",
+          "logIndex": 5,
+          "emissionSeq": 0,
+          "timestamp": 1770143678,
+          "wallet": "HT2yaxCEtvr8UMHnQb9LKZre81v7S9cKRgrqSsZ3EXd4",
+          "sentAsset": "So11111111111111111111111111111111111111112",
+          "sentAmount": "766304585",
+          "positionId": "solana:orca_whirlpool:7fP3EJrjdn8yxDvoQd6Dq44PXidGEX3ticnA65iWuc8q"
+        },
+        {
+          "type": "lp_deposit",
+          "subtype": "add_liquidity",
+          "logIndex": 5,
+          "emissionSeq": 1,
+          "timestamp": 1770143678,
+          "wallet": "HT2yaxCEtvr8UMHnQb9LKZre81v7S9cKRgrqSsZ3EXd4",
+          "sentAsset": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+          "sentAmount": "20455587",
+          "positionId": "solana:orca_whirlpool:7fP3EJrjdn8yxDvoQd6Dq44PXidGEX3ticnA65iWuc8q"
+        }
+      ]
+    },
+    {
+      "txHash": "2QjyicHtNRW8y9SDifKgcmi7g9ik3xZLtPSWwVhfHaNER1KeuL2iZmXqH7XXCS49Gik7sfpWXH1tnVjzPmzE2gDy",
+      "source": "own",
+      "case": "partial close — decrease without closePosition (SOL/USDC)",
+      "notes": "Standalone DecreaseLiquidity@5 on position 84VVGAnh... which stays open (same position is harvested later in fixture #6). Legs @6 WSOL, @7 USDC, received side.",
+      "wallet": "HT2yaxCEtvr8UMHnQb9LKZre81v7S9cKRgrqSsZ3EXd4",
+      "expectedEvents": [
+        {
+          "type": "lp_withdraw",
+          "subtype": "remove_liquidity",
+          "logIndex": 5,
+          "emissionSeq": 0,
+          "timestamp": 1770140827,
+          "wallet": "HT2yaxCEtvr8UMHnQb9LKZre81v7S9cKRgrqSsZ3EXd4",
+          "receivedAsset": "So11111111111111111111111111111111111111112",
+          "receivedAmount": "17634304691",
+          "positionId": "solana:orca_whirlpool:84VVGAnhXbYgidASD49PkDyJVJZ1QhtSQKX3QfgtbHNr"
+        },
+        {
+          "type": "lp_withdraw",
+          "subtype": "remove_liquidity",
+          "logIndex": 5,
+          "emissionSeq": 1,
+          "timestamp": 1770140827,
+          "wallet": "HT2yaxCEtvr8UMHnQb9LKZre81v7S9cKRgrqSsZ3EXd4",
+          "receivedAsset": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+          "receivedAmount": "104956780",
+          "positionId": "solana:orca_whirlpool:84VVGAnhXbYgidASD49PkDyJVJZ1QhtSQKX3QfgtbHNr"
+        }
+      ]
+    },
+    {
+      "txHash": "yYZhPBxPMZAVHZ6FSf8GhCtJsEnTa5c4r3CaqTxJnEvmWYeC8ENX9KUFTroYzALJRsNkNVFUd6yDKymPKLrjBMM",
+      "source": "own",
+      "case": "full close: decrease + collectFees + closePosition in one tx",
+      "notes": "DecreaseLiquidity@3 (legs @4/@5), CollectFees@6 (legs @7/@8, tiny amounts), ClosePositionWithTokenExtensions@9 (NFT burn @10, no amounts). Position PDA 2emqYEnj..., pool 3ThdFZQK.../6FrrzDk5... pair.",
+      "wallet": "HT2yaxCEtvr8UMHnQb9LKZre81v7S9cKRgrqSsZ3EXd4",
+      "expectedEvents": [
+        {
+          "type": "lp_withdraw",
+          "subtype": "remove_liquidity",
+          "logIndex": 3,
+          "emissionSeq": 0,
+          "timestamp": 1761199657,
+          "wallet": "HT2yaxCEtvr8UMHnQb9LKZre81v7S9cKRgrqSsZ3EXd4",
+          "receivedAsset": "3ThdFZQKM6kRyVGLG48kaPg5TRMhYMKY1iCRa9xop1WC",
+          "receivedAmount": "6195796",
+          "positionId": "solana:orca_whirlpool:2emqYEnjZZSw1jjzhqKz7o1tPpNcPY32xWGCUWA7ZGxd"
+        },
+        {
+          "type": "lp_withdraw",
+          "subtype": "remove_liquidity",
+          "logIndex": 3,
+          "emissionSeq": 1,
+          "timestamp": 1761199657,
+          "wallet": "HT2yaxCEtvr8UMHnQb9LKZre81v7S9cKRgrqSsZ3EXd4",
+          "receivedAsset": "6FrrzDk5mQARGc1TDYoyVnSyRdds1t4PbtohCD6p3tgG",
+          "receivedAmount": "13951759",
+          "positionId": "solana:orca_whirlpool:2emqYEnjZZSw1jjzhqKz7o1tPpNcPY32xWGCUWA7ZGxd"
+        },
+        {
+          "type": "lp_fee",
+          "subtype": "collect",
+          "logIndex": 6,
+          "emissionSeq": 0,
+          "timestamp": 1761199657,
+          "wallet": "HT2yaxCEtvr8UMHnQb9LKZre81v7S9cKRgrqSsZ3EXd4",
+          "receivedAsset": "3ThdFZQKM6kRyVGLG48kaPg5TRMhYMKY1iCRa9xop1WC",
+          "receivedAmount": "198",
+          "positionId": "solana:orca_whirlpool:2emqYEnjZZSw1jjzhqKz7o1tPpNcPY32xWGCUWA7ZGxd"
+        },
+        {
+          "type": "lp_fee",
+          "subtype": "collect",
+          "logIndex": 6,
+          "emissionSeq": 1,
+          "timestamp": 1761199657,
+          "wallet": "HT2yaxCEtvr8UMHnQb9LKZre81v7S9cKRgrqSsZ3EXd4",
+          "receivedAsset": "6FrrzDk5mQARGc1TDYoyVnSyRdds1t4PbtohCD6p3tgG",
+          "receivedAmount": "364",
+          "positionId": "solana:orca_whirlpool:2emqYEnjZZSw1jjzhqKz7o1tPpNcPY32xWGCUWA7ZGxd"
+        },
+        {
+          "type": "lp_withdraw",
+          "subtype": "close_position",
+          "logIndex": 9,
+          "emissionSeq": 0,
+          "timestamp": 1761199657,
+          "wallet": "HT2yaxCEtvr8UMHnQb9LKZre81v7S9cKRgrqSsZ3EXd4",
+          "positionId": "solana:orca_whirlpool:2emqYEnjZZSw1jjzhqKz7o1tPpNcPY32xWGCUWA7ZGxd"
+        }
+      ]
+    },
+    {
+      "txHash": "2ETDRYWnJBr4w8UW6tBpBxaK8RD58AAeXRqF6HExx8957CxTD3ak5CxWuw6EmYAPiV45gvAkkhnv2XXqHsZPaFqm",
+      "source": "own",
+      "case": "full close V2, single-sided decrease + two-sided fees (WSOL/hSOL)",
+      "notes": "DecreaseLiquidityV2@5 with WSOL leg @6 amount 0 (omitted) and hSOL leg @7; CollectFeesV2@8 with both legs non-zero (@9 WSOL, @10 hSOL); ClosePositionWithTokenExtensions@11. Position PDA EteUdG68....",
+      "wallet": "HT2yaxCEtvr8UMHnQb9LKZre81v7S9cKRgrqSsZ3EXd4",
+      "expectedEvents": [
+        {
+          "type": "lp_withdraw",
+          "subtype": "remove_liquidity",
+          "logIndex": 5,
+          "emissionSeq": 0,
+          "timestamp": 1759181815,
+          "wallet": "HT2yaxCEtvr8UMHnQb9LKZre81v7S9cKRgrqSsZ3EXd4",
+          "receivedAsset": "HeLp6NuQkmYB4pYWo2zYs22mESHXPQYzXbB8n4V98jwC",
+          "receivedAmount": "1908914045263",
+          "positionId": "solana:orca_whirlpool:EteUdG68r7dtNHixEqMgRq3TwUYdvtxkxbrtncuNhCy2"
+        },
+        {
+          "type": "lp_fee",
+          "subtype": "collect",
+          "logIndex": 8,
+          "emissionSeq": 0,
+          "timestamp": 1759181815,
+          "wallet": "HT2yaxCEtvr8UMHnQb9LKZre81v7S9cKRgrqSsZ3EXd4",
+          "receivedAsset": "So11111111111111111111111111111111111111112",
+          "receivedAmount": "348052",
+          "positionId": "solana:orca_whirlpool:EteUdG68r7dtNHixEqMgRq3TwUYdvtxkxbrtncuNhCy2"
+        },
+        {
+          "type": "lp_fee",
+          "subtype": "collect",
+          "logIndex": 8,
+          "emissionSeq": 1,
+          "timestamp": 1759181815,
+          "wallet": "HT2yaxCEtvr8UMHnQb9LKZre81v7S9cKRgrqSsZ3EXd4",
+          "receivedAsset": "HeLp6NuQkmYB4pYWo2zYs22mESHXPQYzXbB8n4V98jwC",
+          "receivedAmount": "821263105",
+          "positionId": "solana:orca_whirlpool:EteUdG68r7dtNHixEqMgRq3TwUYdvtxkxbrtncuNhCy2"
+        },
+        {
+          "type": "lp_withdraw",
+          "subtype": "close_position",
+          "logIndex": 11,
+          "emissionSeq": 0,
+          "timestamp": 1759181815,
+          "wallet": "HT2yaxCEtvr8UMHnQb9LKZre81v7S9cKRgrqSsZ3EXd4",
+          "positionId": "solana:orca_whirlpool:EteUdG68r7dtNHixEqMgRq3TwUYdvtxkxbrtncuNhCy2"
+        }
+      ]
+    },
+    {
+      "txHash": "qvMYfEc4kKp3tQMvxg2qwEUWta9jM2CErnEX3rooUvng2nqn5GYSokYoW7pKMPCwx1bsux8Qbc69eZMsorSDpkd",
+      "source": "own",
+      "case": "harvest: fee + reward same tx, reward transfer is zero (SOL/USDC)",
+      "notes": "UpdateFeesAndRewards@3 (no event), CollectFees@6 (legs @7 WSOL, @8 USDC), CollectReward@9 with zero-amount ORCA transfer @10 (no event). Same position 84VVGAnh... as fixture #3.",
+      "wallet": "HT2yaxCEtvr8UMHnQb9LKZre81v7S9cKRgrqSsZ3EXd4",
+      "expectedEvents": [
+        {
+          "type": "lp_fee",
+          "subtype": "collect",
+          "logIndex": 6,
+          "emissionSeq": 0,
+          "timestamp": 1770141101,
+          "wallet": "HT2yaxCEtvr8UMHnQb9LKZre81v7S9cKRgrqSsZ3EXd4",
+          "receivedAsset": "So11111111111111111111111111111111111111112",
+          "receivedAmount": "123061136",
+          "positionId": "solana:orca_whirlpool:84VVGAnhXbYgidASD49PkDyJVJZ1QhtSQKX3QfgtbHNr"
+        },
+        {
+          "type": "lp_fee",
+          "subtype": "collect",
+          "logIndex": 6,
+          "emissionSeq": 1,
+          "timestamp": 1770141101,
+          "wallet": "HT2yaxCEtvr8UMHnQb9LKZre81v7S9cKRgrqSsZ3EXd4",
+          "receivedAsset": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+          "receivedAmount": "12131301",
+          "positionId": "solana:orca_whirlpool:84VVGAnhXbYgidASD49PkDyJVJZ1QhtSQKX3QfgtbHNr"
+        }
+      ]
+    },
+    {
+      "txHash": "qUT1E4Uhr3yYvHxo7itrkHignogPgJgDCQovqzyt2iWshUe6FhXpC6W6T41Qg1rQ88dfWaeAoXB5HTYExRWQk2L",
+      "source": "own",
+      "case": "harvest V2 fees + two zero-amount collectReward instructions (WSOL/hSOL)",
+      "notes": "CollectFeesV2@6 (transferChecked legs @7 WSOL, @8 hSOL); CollectReward@9 and CollectReward@11 both move 0 ORCA (no events). Position PDA DLZi68Zs....",
+      "wallet": "HT2yaxCEtvr8UMHnQb9LKZre81v7S9cKRgrqSsZ3EXd4",
+      "expectedEvents": [
+        {
+          "type": "lp_fee",
+          "subtype": "collect",
+          "logIndex": 6,
+          "emissionSeq": 0,
+          "timestamp": 1757663937,
+          "wallet": "HT2yaxCEtvr8UMHnQb9LKZre81v7S9cKRgrqSsZ3EXd4",
+          "receivedAsset": "So11111111111111111111111111111111111111112",
+          "receivedAmount": "11047928",
+          "positionId": "solana:orca_whirlpool:DLZi68ZsebxYhQstyyCW3V8Um7hPwm3G4vcWwqJPWdfu"
+        },
+        {
+          "type": "lp_fee",
+          "subtype": "collect",
+          "logIndex": 6,
+          "emissionSeq": 1,
+          "timestamp": 1757663937,
+          "wallet": "HT2yaxCEtvr8UMHnQb9LKZre81v7S9cKRgrqSsZ3EXd4",
+          "receivedAsset": "HeLp6NuQkmYB4pYWo2zYs22mESHXPQYzXbB8n4V98jwC",
+          "receivedAmount": "21750152536",
+          "positionId": "solana:orca_whirlpool:DLZi68ZsebxYhQstyyCW3V8Um7hPwm3G4vcWwqJPWdfu"
+        }
+      ]
+    },
+    {
+      "txHash": "3K716FcCMjw5Ssy7TRC7woXtDM8kakKpzMYWfjgWNL2aPPb3GDCcq4Ywpbp2Hd7uV4zByFUvNA1AZrdgVWcp5A5j",
+      "source": "own",
+      "case": "two positions harvested in one tx (SOL/USDC pool)",
+      "notes": "Update+CollectFees+CollectReward(0) twice: position 9JFyT7oo... at @6 (legs @7/@8) and position 8eKMieua... at @12 (legs @13/@14). Events must split by positionId. Rewards zero (no events).",
+      "wallet": "HT2yaxCEtvr8UMHnQb9LKZre81v7S9cKRgrqSsZ3EXd4",
+      "expectedEvents": [
+        {
+          "type": "lp_fee",
+          "subtype": "collect",
+          "logIndex": 6,
+          "emissionSeq": 0,
+          "timestamp": 1763626656,
+          "wallet": "HT2yaxCEtvr8UMHnQb9LKZre81v7S9cKRgrqSsZ3EXd4",
+          "receivedAsset": "So11111111111111111111111111111111111111112",
+          "receivedAmount": "146248979",
+          "positionId": "solana:orca_whirlpool:9JFyT7ooQRX4oaesVuEVZaB1yXQLrCvfLsyBrehnHWau"
+        },
+        {
+          "type": "lp_fee",
+          "subtype": "collect",
+          "logIndex": 6,
+          "emissionSeq": 1,
+          "timestamp": 1763626656,
+          "wallet": "HT2yaxCEtvr8UMHnQb9LKZre81v7S9cKRgrqSsZ3EXd4",
+          "receivedAsset": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+          "receivedAmount": "21252028",
+          "positionId": "solana:orca_whirlpool:9JFyT7ooQRX4oaesVuEVZaB1yXQLrCvfLsyBrehnHWau"
+        },
+        {
+          "type": "lp_fee",
+          "subtype": "collect",
+          "logIndex": 12,
+          "emissionSeq": 0,
+          "timestamp": 1763626656,
+          "wallet": "HT2yaxCEtvr8UMHnQb9LKZre81v7S9cKRgrqSsZ3EXd4",
+          "receivedAsset": "So11111111111111111111111111111111111111112",
+          "receivedAmount": "58388605",
+          "positionId": "solana:orca_whirlpool:8eKMieuaZaybEDdPRyUDPzU1vSc7tyw27Mtufp9mMa5h"
+        },
+        {
+          "type": "lp_fee",
+          "subtype": "collect",
+          "logIndex": 12,
+          "emissionSeq": 1,
+          "timestamp": 1763626656,
+          "wallet": "HT2yaxCEtvr8UMHnQb9LKZre81v7S9cKRgrqSsZ3EXd4",
+          "receivedAsset": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+          "receivedAmount": "9969209",
+          "positionId": "solana:orca_whirlpool:8eKMieuaZaybEDdPRyUDPzU1vSc7tyw27Mtufp9mMa5h"
+        }
+      ]
+    },
+    {
+      "txHash": "28k3Uv36jakimJ99i7Jq6Tp9zGJkAyy5jFHRprhcexoNTC68gNMoBfyGkWDbzZvwBNKntGuuV75thA6TQ7Bag8Rp",
+      "source": "own",
+      "case": "close without collectFees, single-sided decrease (out-of-range close)",
+      "notes": "DecreaseLiquidity@5 with WSOL leg @6 amount 0 (omitted) and USDC leg @7; ClosePositionWithTokenExtensions@8, no CollectFees ix. Same position 8eKMieua... as fixture #8, closed 93s after the harvest — together they pin a cross-tx rebalance-style lifecycle.",
+      "wallet": "HT2yaxCEtvr8UMHnQb9LKZre81v7S9cKRgrqSsZ3EXd4",
+      "expectedEvents": [
+        {
+          "type": "lp_withdraw",
+          "subtype": "remove_liquidity",
+          "logIndex": 5,
+          "emissionSeq": 0,
+          "timestamp": 1763626749,
+          "wallet": "HT2yaxCEtvr8UMHnQb9LKZre81v7S9cKRgrqSsZ3EXd4",
+          "receivedAsset": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+          "receivedAmount": "5770558454",
+          "positionId": "solana:orca_whirlpool:8eKMieuaZaybEDdPRyUDPzU1vSc7tyw27Mtufp9mMa5h"
+        },
+        {
+          "type": "lp_withdraw",
+          "subtype": "close_position",
+          "logIndex": 8,
+          "emissionSeq": 0,
+          "timestamp": 1763626749,
+          "wallet": "HT2yaxCEtvr8UMHnQb9LKZre81v7S9cKRgrqSsZ3EXd4",
+          "positionId": "solana:orca_whirlpool:8eKMieuaZaybEDdPRyUDPzU1vSc7tyw27Mtufp9mMa5h"
+        }
+      ]
+    },
+    {
+      "txHash": "uALEDbcBNhx2C1BGcWaFRHUGALWcGiJsWs6kBuXokGpwudBFCkNtpkACUycyV5jzCjoXfyZ92ETTLQDtGbXuFxL",
+      "source": "own",
+      "case": "single swap USDC -> WSOL (direct, not via aggregator)",
+      "notes": "Swap@5: user pays USDC (leg @6, user ATA -> vault), receives WSOL (leg @7, vault -> ephemeral WSOL account, unwrapped at @8). One swap:trade event with both sides; no positionId.",
+      "wallet": "HT2yaxCEtvr8UMHnQb9LKZre81v7S9cKRgrqSsZ3EXd4",
+      "expectedEvents": [
+        {
+          "type": "swap",
+          "subtype": "trade",
+          "logIndex": 5,
+          "emissionSeq": 0,
+          "timestamp": 1770327598,
+          "wallet": "HT2yaxCEtvr8UMHnQb9LKZre81v7S9cKRgrqSsZ3EXd4",
+          "sentAsset": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+          "sentAmount": "1019259717",
+          "receivedAsset": "So11111111111111111111111111111111111111112",
+          "receivedAmount": "12821240186"
+        }
+      ]
+    },
+    {
+      "txHash": "r62RgUWJY6aGdwpx3JdjJPboN9mzRfBUqRfc6LTmSCZrVxvQQa4X28EZcKsuQontYCiNEYpTvj4ZhvGmpxs9nYf",
+      "source": "own",
+      "case": "twoHopSwap USDC -> USDT -> WSOL collapsed to one trade",
+      "notes": "TwoHopSwap@10 with four legs: @11 user USDC out, @12 USDT to user (intermediate), @13 user USDT out (intermediate, nets to zero with @12 modulo rounding), @14 WSOL to user. One swap:trade with net input/output; intermediate USDT (Es9vMFrz...) not emitted.",
+      "wallet": "HT2yaxCEtvr8UMHnQb9LKZre81v7S9cKRgrqSsZ3EXd4",
+      "expectedEvents": [
+        {
+          "type": "swap",
+          "subtype": "trade",
+          "logIndex": 10,
+          "emissionSeq": 0,
+          "timestamp": 1762292921,
+          "wallet": "HT2yaxCEtvr8UMHnQb9LKZre81v7S9cKRgrqSsZ3EXd4",
+          "sentAsset": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+          "sentAmount": "265430143",
+          "receivedAsset": "So11111111111111111111111111111111111111112",
+          "receivedAmount": "1775264110"
+        }
+      ]
+    }
+  ]
+}

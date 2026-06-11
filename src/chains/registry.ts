@@ -1,6 +1,8 @@
 import type { Chain } from '../types/event';
 import type { Wallet } from '../config/wallets-loader';
 import type { Db } from '../db/client';
+import { createSolanaIngestAdapter } from './solana/ingest';
+import { createSuiIngestAdapter } from './sui/ingest';
 
 export interface IngestOptions {
   /** Shared SQLite handle (WAL, busy_timeout=5000) — adapters write raw_txs via the repos. */
@@ -52,5 +54,8 @@ export class ChainRegistry {
  * sui) register here as their issues land.
  */
 export function createDefaultChainRegistry(): ChainRegistry {
-  return new ChainRegistry();
+  const registry = new ChainRegistry();
+  registry.register(createSolanaIngestAdapter()); // [1B.1]
+  registry.register(createSuiIngestAdapter()); // [1C.2]
+  return registry;
 }
