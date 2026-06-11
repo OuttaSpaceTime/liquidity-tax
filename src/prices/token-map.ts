@@ -39,10 +39,10 @@ export const TOKEN_TO_COINGECKO_ID: Readonly<Record<string, string>> = {
   JITOSOL: 'jito-staked-sol',
   PUMP: 'pump-fun',
   AI16Z: 'ai16z',
-  CRT: 'carrot',
+  CRT: 'carrot-2', // 'carrot' (py-era id) 404s on CoinGecko; 'carrot-2' verified 2026-06-11
   // Sui
   CETUS: 'cetus-protocol',
-  NAVX: 'navi-protocol',
+  NAVX: 'navi', // 'navi-protocol' (py-era id) 404s on CoinGecko; 'navi' verified 2026-06-11
   DEEP: 'deep',
   WAL: 'walrus-2',
   IKA: 'ika',
@@ -52,6 +52,31 @@ export const TOKEN_TO_COINGECKO_ID: Readonly<Record<string, string>> = {
   AFSUI: 'aftermath-staked-sui',
   STSUI: 'alphafi-stsui',
   HASUI: 'haedal-staked-sui',
+
+  // ---------------------------------------------------------------------------
+  // Raw on-chain asset ids. Some handlers emit the raw mint address / ERC-20
+  // address / Sui coin type as `asset` when no symbol is resolvable from tx
+  // data alone. Each id below was verified against CoinGecko /coins/{id}
+  // platform addresses (2026-06-11 backfill integration run).
+  // ---------------------------------------------------------------------------
+  // Solana mints
+  So11111111111111111111111111111111111111112: 'solana', // wSOL (1:1 wrapped)
+  EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v: 'usd-coin', // USDC
+  J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn: 'jito-staked-sol', // jitoSOL
+  orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE: 'orca', // ORCA
+  pumpCmXqMfrsAkQ5r49WcJnRayYRqmXz6ae8H7H9Dfn: 'pump-fun', // PUMP
+  CRTx1JouZhzSU6XytsE42UQraoGqiHgxabocVfARTy2s: 'carrot-2', // CRT (Carrot)
+  HeLp6NuQkmYB4pYWo2zYs22mESHXPQYzXbB8n4V98jwC: 'ai16z', // AI16Z
+  '27G8MtK7VtTcCHkpASjSDdkWWYfoqT6ggEuKidVJidD4': 'jupiter-perpetuals-liquidity-provider-token', // JLP
+  '3ThdFZQKM6kRyVGLG48kaPg5TRMhYMKY1iCRa9xop1WC': 'solstice-eusx', // eUSX
+  '6FrrzDk5mQARGc1TDYoyVnSyRdds1t4PbtohCD6p3tgG': 'usx', // Solstice USX
+  // Base ERC-20 addresses (lowercase, as emitted)
+  '0x50c5725949a6f0c72e6c4a641f24049a917db0cb': 'dai', // DAI
+  '0x60a3e35cc302bfa44cb288bc5a4f316fdb1adb42': 'euro-coin', // EURC
+  '0x35e5db674d8e93a03d814fa0ada70731efe8a4b9': 'resolv-usr', // USR (Resolv)
+  // Sui coin types
+  '0x3a304c7feba2d819ea57c3542d68439ca2c386ba02159c740f7b406e592c62ea::haedal::HAEDAL': 'haedal',
+  '0x7262fb2f7a3a14c888c438a3cd9b912469a58cf60f367352c46584262e8299aa::ika::IKA': 'ika',
 };
 
 const BY_UPPER = new Map(

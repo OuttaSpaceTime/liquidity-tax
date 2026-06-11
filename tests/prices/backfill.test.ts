@@ -82,7 +82,7 @@ describe('backfillPrices', () => {
 
     const summary = await backfillPrices(db, { maxCalls: 500 }, deps);
 
-    expect(llamaCalls).toEqual([{ cgId: 'carrot', date: '2025-07-05' }]);
+    expect(llamaCalls).toEqual([{ cgId: 'carrot-2', date: '2025-07-05' }]);
     expect(getPrice(db, 'CRT', '2025-07-05')).toMatchObject({
       usdPrice: 0.5,
       eurPrice: null,
@@ -100,7 +100,7 @@ describe('backfillPrices', () => {
 
     expect(countPrices(db)).toBe(0);
     expect(summary.failures).toEqual([
-      { cgId: 'carrot', date: '2025-07-05', reason: 'coingecko:not_found defillama:no_price' },
+      { cgId: 'carrot-2', date: '2025-07-05', reason: 'coingecko:not_found defillama:no_price' },
     ]);
   });
 

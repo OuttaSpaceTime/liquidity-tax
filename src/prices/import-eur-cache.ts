@@ -21,6 +21,17 @@ import { getPrice, upsertPrices } from './repo';
 /** EUR close from the sheets CryptoCompare cache + USD close from DefiLlama. */
 export const EUR_CACHE_SOURCE = 'eur-cache+defillama';
 
+/**
+ * The sheets cache predates the token-map id fixes: 'carrot' and
+ * 'navi-protocol' were py-era ids that 404 on today's CoinGecko (and on
+ * DefiLlama's coingecko: routing). Translate them to the verified current ids
+ * before symbol lookup and the DefiLlama USD fetch.
+ */
+const LEGACY_CG_IDS: Readonly<Record<string, string>> = {
+  carrot: 'carrot-2',
+  'navi-protocol': 'navi',
+};
+
 export type EurCacheFile = Record<string, Record<string, { prices: [number, number][] }>>;
 
 export interface ImportSummary {
@@ -54,15 +65,16 @@ export async function importEurCache(
     unmappedIds: [],
   };
 
-  for (const cgId of Object.keys(cache).sort()) {
+  for (const cacheId of Object.keys(cache).sort()) {
+    const cgId = LEGACY_CG_IDS[cacheId] ?? cacheId;
     const assets = assetsForCoingeckoId(cgId);
     if (assets.length === 0) {
-      summary.unmappedIds.push(cgId);
+      summary.unmappedIds.push(cacheId);
       continue;
     }
-    for (const date of Object.keys(cache[cgId]).sort()) {
+    for (const date of Object.keys(cache[cacheId]).sort()) {
       summary.cachePairs += 1;
-      const points = cache[cgId][date].prices;
+      const points = cache[cacheId][date].prices;
       if (points.length === 0) {
         summary.skippedEmpty += 1;
         continue;

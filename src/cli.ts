@@ -2,6 +2,8 @@
 import { Command } from 'commander';
 import { createDefaultRegistry } from './decoder';
 import { pricesCommand } from './prices/cli';
+import { linkCommand } from './linker/cli';
+import { rebuildAllPositions } from './positions';
 import { createDefaultChainRegistry } from './chains/registry';
 import { loadWallets, walletsFor } from './config/wallets-loader';
 import { openDb } from './db/client';
@@ -83,12 +85,15 @@ program
           `${tally.decoded} decoded (${tally.events} events), ` +
           `${tally.skipped} skipped, ${tally.unclassified} unclassified`,
       );
+      const rebuilt = rebuildAllPositions(client.db);
+      console.log(`positions: ${rebuilt.upserted} rebuilt, ${rebuilt.deleted} stale removed`);
     } finally {
       client.close();
     }
   });
 
 program.addCommand(pricesCommand());
+program.addCommand(linkCommand());
 
 program
   .command('status')
