@@ -1,5 +1,5 @@
 import type { BaseRawJson, RawRpcLog } from '../chains/base/ingest';
-import type { DecodeResult, Handler, RawTx } from '../decoder/types';
+import type { DecodeContext, DecodeResult, Handler, RawTx } from '../decoder/types';
 import type { Chain, PositionId, Protocol, TaxEvent } from '../types/event';
 
 /**
@@ -49,7 +49,7 @@ export const DECREASE_LIQUIDITY_TOPIC =
   '0x26f6a048ee9138f2c0ce266f322cb99228e8d619ae2bff30c67f8dcf9d2377b4';
 export const COLLECT_TOPIC = '0x40d0efd1a53d60ecbf40971b9daf7dc90178c3aadc7aab1765632738fa8b8f01';
 
-const ZERO_TOPIC = `0x${'0'.repeat(64)}`;
+export const ZERO_TOPIC = `0x${'0'.repeat(64)}`;
 
 /**
  * Base-chain ERC-20 address → symbol, for the fixture/report asset naming
@@ -71,14 +71,14 @@ export const BASE_TOKEN_SYMBOLS: Readonly<Record<string, string>> = {
   '0x11030f79109269d796fd0fb956d6244e502757f7': 'CTR',
 };
 
-interface ParsedLog {
+export interface ParsedLog {
   logIndex: number;
   address: string;
   topics: string[];
   data: string;
 }
 
-interface Erc20Transfer {
+export interface Erc20Transfer {
   logIndex: number;
   token: string;
   from: string;
@@ -96,7 +96,7 @@ interface NpmGroup {
 }
 
 /** amounts decoded from an NPM event's data words. */
-interface LegAmounts {
+export interface LegAmounts {
   amount0: bigint;
   amount1: bigint;
 }
@@ -124,26 +124,58 @@ export abstract class UniV3LikeHandler implements Handler {
   }
 
   /** Decode is context-free: ownership is implicit (only owner txs are ingested). */
-  decode(raw: RawTx): DecodeResult {
+  decode(raw: RawTx, ctx: DecodeContext): DecodeResult {
     const rawJson = this.rawJson(raw);
     if (rawJson === undefined) {
       return { kind: 'unclassified', reason: `${this.id}: raw_json has no receipt logs` };
     }
     const logs = rawJson.receipt.logs.map(parseLog);
     const transfers = erc20Transfers(logs);
+    return this.decodeParsed(raw, rawJson, logs, transfers, ctx);
+  }
+
+  /**
+   * Template hook over the parsed receipt: the base implementation decodes the
+   * NPM events only. Protocol subclasses (Aerodrome) override this to compose
+   * the NPM events with protocol-specific ones (gauges, Sickle-proxy flows)
+   * and use `ctx.wallets` for owner resolution.
+   */
+  protected decodeParsed(
+    raw: RawTx,
+    rawJson: BaseRawJson,
+    logs: ParsedLog[],
+    transfers: Erc20Transfer[],
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- part of the hook contract for subclasses
+    ctx: DecodeContext,
+  ): DecodeResult {
+    const events = this.decodeNpmEvents(raw, rawJson, logs, transfers);
+    if (typeof events === 'string') return { kind: 'unclassified', reason: events };
+    if (events.length === 0) {
+      return { kind: 'unclassified', reason: `${this.id}: NPM events present but all legs zero` };
+    }
+    return { kind: 'ok', events };
+  }
+
+  /**
+   * Decode all NPM events of this receipt into TaxEvents (empty when every
+   * leg is zero), or return an unclassified reason string on hard failures.
+   */
+  protected decodeNpmEvents(
+    raw: RawTx,
+    rawJson: BaseRawJson,
+    logs: ParsedLog[],
+    transfers: Erc20Transfer[],
+  ): TaxEvent[] | string {
     const groups = this.groupByTokenId(logs);
     const txFrom = rawJson.tx.from.toLowerCase();
 
     const events: TaxEvent[] = [];
     for (const group of groups) {
       const result = this.decodeGroup(raw, group, transfers, txFrom);
-      if (typeof result === 'string') return { kind: 'unclassified', reason: result };
+      if (typeof result === 'string') return result;
       events.push(...result);
     }
-    if (events.length === 0) {
-      return { kind: 'unclassified', reason: `${this.id}: NPM events present but all legs zero` };
-    }
-    return { kind: 'ok', events };
+    return events;
   }
 
   // -------------------------------------------------------------------------
@@ -169,8 +201,9 @@ export abstract class UniV3LikeHandler implements Handler {
         return `${this.id}: cannot resolve token addresses for IncreaseLiquidity at log ${log.logIndex}`;
       }
       const subtype = group.minted !== undefined ? 'open_position' : 'add_liquidity';
-      const wallet =
-        group.minted !== undefined ? topicAddress(group.minted.topics[2]!) : txFrom;
+      const wallet = this.resolveWallet(
+        group.minted !== undefined ? topicAddress(group.minted.topics[2]!) : txFrom,
+      );
       for (const leg of nonzeroLegs(amounts, tokens)) {
         events.push({
           type: 'lp_deposit',
@@ -204,15 +237,34 @@ export abstract class UniV3LikeHandler implements Handler {
       const decreaseTotals: LegAmounts = sumAmounts(group.decreases);
       const firstCollect = group.collects[0]!;
       const recipient = topicAddress(`0x${firstCollect.data.slice(2, 66)}`);
-      const tokens = matchTransferPair(
-        transfers.filter((t) => t.to === recipient),
-        collectTotals,
-        claimed,
-        (t) => t.from,
-      );
-      if (tokens === undefined) {
-        return `${this.id}: cannot resolve token addresses for Collect at log ${firstCollect.logIndex}`;
+
+      // Resolve token0/token1 per Collect log — one tx can hold several
+      // Collects for the same tokenId (vfat Sickle rebalances: a fee collect
+      // and a principal collect), so the summed totals match no single
+      // transfer. Every collect must agree on the token pair.
+      let token0: string | undefined;
+      let token1: string | undefined;
+      for (const log of group.collects) {
+        const logRecipient = topicAddress(`0x${log.data.slice(2, 66)}`);
+        const logTokens = matchTransferPair(
+          transfers.filter((t) => t.to === logRecipient),
+          legAmounts(log),
+          claimed,
+          (t) => t.from,
+        );
+        if (logTokens === undefined) {
+          return `${this.id}: cannot resolve token addresses for Collect at log ${log.logIndex}`;
+        }
+        if (
+          (token0 !== undefined && logTokens.token0 !== undefined && logTokens.token0 !== token0) ||
+          (token1 !== undefined && logTokens.token1 !== undefined && logTokens.token1 !== token1)
+        ) {
+          return `${this.id}: conflicting token addresses across Collect logs (tokenId ${group.tokenId})`;
+        }
+        token0 ??= logTokens.token0;
+        token1 ??= logTokens.token1;
       }
+      const tokens = { token0, token1 };
 
       // principal legs at the DecreaseLiquidity log(s)
       const subtype = group.burned !== undefined ? 'close_position' : 'remove_liquidity';
@@ -226,7 +278,7 @@ export abstract class UniV3LikeHandler implements Handler {
             logIndex: log.logIndex,
             emissionSeq: leg.seq,
             timestamp: raw.blockTimestamp,
-            wallet: recipient,
+            wallet: this.resolveWallet(recipient),
             receivedAsset: this.assetSymbol(leg.token),
             receivedAmount: leg.amount,
             positionId,
@@ -253,7 +305,7 @@ export abstract class UniV3LikeHandler implements Handler {
           logIndex: firstCollect.logIndex,
           emissionSeq: leg.seq,
           timestamp: raw.blockTimestamp,
-          wallet: recipient,
+          wallet: this.resolveWallet(recipient),
           receivedAsset: this.assetSymbol(leg.token),
           receivedAmount: leg.amount,
           positionId,
@@ -275,6 +327,16 @@ export abstract class UniV3LikeHandler implements Handler {
     return BASE_TOKEN_SYMBOLS[tokenAddress] ?? tokenAddress;
   }
 
+  /**
+   * Wallet attribution hook: receives the on-chain actor (mint recipient,
+   * collect recipient, or tx sender) and returns the wallet to put on the
+   * TaxEvent. Identity here; Aerodrome maps vfat Sickle proxy contracts (and
+   * keeper senders) to the owner EOA.
+   */
+  protected resolveWallet(wallet: string): string {
+    return wallet;
+  }
+
   protected positionId(tokenId: bigint): PositionId {
     return `${this.chain}:${this.protocol}:${tokenId.toString()}`;
   }
@@ -283,7 +345,7 @@ export abstract class UniV3LikeHandler implements Handler {
   // Receipt parsing
   // -------------------------------------------------------------------------
 
-  private rawJson(raw: RawTx): BaseRawJson | undefined {
+  protected rawJson(raw: RawTx): BaseRawJson | undefined {
     const rawJson = raw.rawJson as Partial<BaseRawJson> | null;
     if (rawJson?.receipt?.logs === undefined || rawJson.tx === undefined) return undefined;
     return rawJson as BaseRawJson;
@@ -358,7 +420,7 @@ function erc20Transfers(logs: ParsedLog[]): Erc20Transfer[] {
 }
 
 /** `amount0`/`amount1` are data words 1 and 2 for all three NPM events. */
-function legAmounts(log: ParsedLog): LegAmounts {
+export function legAmounts(log: ParsedLog): LegAmounts {
   const data = log.data.slice(2);
   return {
     amount0: BigInt(`0x${data.slice(64, 128) || '0'}`),
@@ -432,6 +494,6 @@ function nonzeroLegs(
 }
 
 /** Last 20 bytes of a 32-byte topic/word, lowercase `0x`-prefixed. */
-function topicAddress(word: string): string {
+export function topicAddress(word: string): string {
   return `0x${word.slice(-40)}`.toLowerCase();
 }
