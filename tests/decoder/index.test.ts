@@ -4,7 +4,7 @@ import { createDefaultRegistry } from '../../src/decoder';
 import { makeRawTx, insertRawTx } from './helpers';
 
 describe('createDefaultRegistry — explicit registration list', () => {
-  it('registers stubs for all 7 future protocol handlers', () => {
+  it('registers all 7 protocol handlers', () => {
     const { db } = createTestDb();
     const registry = createDefaultRegistry(db);
     expect(registry.handlerIds().sort()).toEqual([
@@ -18,7 +18,7 @@ describe('createDefaultRegistry — explicit registration list', () => {
     ]);
   });
 
-  it('all stubs decline to match — everything falls through to unclassified', () => {
+  it('no handler matches an unrelated tx — it falls through to unclassified', () => {
     const { db } = createTestDb();
     const registry = createDefaultRegistry(db);
     for (const chain of ['base', 'solana', 'sui'] as const) {

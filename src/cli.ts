@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { Command } from 'commander';
 import { createDefaultRegistry } from './decoder';
+import { pricesCommand } from './prices/cli';
 import { createDefaultChainRegistry } from './chains/registry';
 import { loadWallets, walletsFor } from './config/wallets-loader';
 import { openDb } from './db/client';
@@ -86,6 +87,8 @@ program
       client.close();
     }
   });
+
+program.addCommand(pricesCommand());
 
 program
   .command('status')

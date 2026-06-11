@@ -137,6 +137,67 @@ describe('DecoderRegistry.decodeAndPersist — idempotency', () => {
     expect(versions.map((v) => v.handler_version)).toEqual([2]);
   });
 
+  it('preserves ingest-time rows (log_index < 0, e.g. sui_ingest_gas) across re-decode', () => {
+    const { db, sqlite } = createTestDb();
+    insertRawTx(db, makeRawTx({ chain: 'sui', txHash: 'GasDigest1' }));
+    // Ingest-time gas:fee row at the documented log_index = -1 sentinel
+    // (src/chains/sui/ingest.ts — "outside event index space").
+    sqlite
+      .query(
+        `INSERT INTO events (chain, tx_hash, log_index, emission_seq, timestamp, wallet,
+                             type, subtype, sent_asset, handler_id, handler_version)
+         VALUES ('sui', 'GasDigest1', -1, 0, 1700000000, '0xwallet',
+                 'gas', 'fee', 'SUI', 'sui_ingest_gas', 1)`,
+      )
+      .run();
+
+    const registry = new DecoderRegistry(db);
+    registry.registerHandler(
+      makeHandler({
+        id: 'h1',
+        chain: 'sui',
+        result: {
+          kind: 'ok',
+          events: [makeEvent({ handlerId: 'h1', chain: 'sui', txHash: 'GasDigest1' })],
+        },
+      }),
+    );
+    registry.decodeAndPersist('sui', 'GasDigest1');
+    registry.decodeAndPersist('sui', 'GasDigest1');
+
+    const rows = sqlite
+      .query<
+        { handler_id: string; log_index: number },
+        [string]
+      >('SELECT handler_id, log_index FROM events WHERE tx_hash = ? ORDER BY log_index')
+      .all('GasDigest1');
+    expect(rows).toEqual([
+      { handler_id: 'sui_ingest_gas', log_index: -1 },
+      { handler_id: 'h1', log_index: 0 },
+    ]);
+  });
+
+  it('preserves ingest-time rows when the tx decodes to unclassified', () => {
+    const { db, sqlite } = createTestDb();
+    insertRawTx(db, makeRawTx({ chain: 'sui', txHash: 'GasDigest2' }));
+    sqlite
+      .query(
+        `INSERT INTO events (chain, tx_hash, log_index, emission_seq, timestamp, wallet,
+                             type, subtype, sent_asset, handler_id, handler_version)
+         VALUES ('sui', 'GasDigest2', -1, 0, 1700000000, '0xwallet',
+                 'gas', 'fee', 'SUI', 'sui_ingest_gas', 1)`,
+      )
+      .run();
+
+    const registry = new DecoderRegistry(db);
+    const result = registry.decodeAndPersist('sui', 'GasDigest2');
+    expect(result.status).toBe('unclassified');
+    const rows = sqlite
+      .query<{ handler_id: string }, [string]>('SELECT handler_id FROM events WHERE tx_hash = ?')
+      .all('GasDigest2');
+    expect(rows).toEqual([{ handler_id: 'sui_ingest_gas' }]);
+  });
+
   it('does not touch events of other txs', () => {
     const { db, sqlite } = createTestDb();
     insertRawTx(db, makeRawTx({ txHash: '0xa' }));

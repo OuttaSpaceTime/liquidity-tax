@@ -1,0 +1,730 @@
+{
+ "chain": "sui",
+ "protocol": "suilend",
+ "scenario": "suilend_withdraw",
+ "txHash": "2injrFQZEaV3ZQR6i2CiQRLx3TsfHP1huopkhX56GPxR",
+ "foreign": false,
+ "notes": "OWN plain Suilend withdraw: WithdrawEvent idx 1 (969991680 SUI ctokens out of the obligation) pairs with RedeemEvent idx 4 (same 969991680 ctokens -> 1000000088 SUI underlying) = ONE lend_supply:withdraw at the Redeem index with the UNDERLYING amount (receivedAmount = Redeem.liquidity_amount, not the ctoken amount). ctoken->underlying cross-check via ReserveAssetDataEvent idx 2: 969991680 * supply_amount.value / (ctoken_supply * 1e18) = 969991680 * 73795279724824974056641910414342814 / (71580801018305101 * 1e18) = 1000000088 exactly. validator::UnstakingRequestEvent idx 5 + springsui liquid_staking::RedeemEvent idx 6 are Suilend's SUI-reserve staker unstaking to fund the withdrawal (protocol-internal, no TaxEvent). Balance check: +983356100 SUI = 1000000088 - net gas.",
+ "walletsContext": [
+  "0x1fa4b4646d7ae3961ec983ab6ef1b61032a7f1c11e4d04d3cc98d97822c13334"
+ ],
+ "blockNumber": 214342060,
+ "raw": {
+  "digest": "2injrFQZEaV3ZQR6i2CiQRLx3TsfHP1huopkhX56GPxR",
+  "transaction": {
+   "data": {
+    "messageVersion": "v1",
+    "transaction": {
+     "kind": "ProgrammableTransaction",
+     "inputs": [
+      {
+       "type": "object",
+       "objectType": "sharedObject",
+       "objectId": "0x84030d26d85eaa7035084a057f2f11f701b7e2e4eda87551becbc7c97505ece1",
+       "initialSharedVersion": "76382579",
+       "mutable": true
+      },
+      {
+       "type": "pure",
+       "valueType": "u64",
+       "value": "0"
+      },
+      {
+       "type": "object",
+       "objectType": "sharedObject",
+       "objectId": "0x0000000000000000000000000000000000000000000000000000000000000006",
+       "initialSharedVersion": "1",
+       "mutable": false
+      },
+      {
+       "type": "object",
+       "objectType": "sharedObject",
+       "objectId": "0x801dbc2f0053d34734814b2d6df491ce7807a725fe9a01ad74a07e9c51396c37",
+       "initialSharedVersion": "20119534",
+       "mutable": false
+      },
+      {
+       "type": "pure",
+       "valueType": "u64",
+       "value": "0"
+      },
+      {
+       "type": "object",
+       "objectType": "immOrOwnedObject",
+       "objectId": "0x51293f9bb0fe7e53b1b4a48b369a0c7fa881d2802c2ba8f959db78a60ad65245",
+       "version": "692863175",
+       "digest": "Gx4sQ3XMPXCLZwEZSpnsmZtCQpxVXqPaicB1HPXLwUbD"
+      },
+      {
+       "type": "pure",
+       "valueType": "u64",
+       "value": "18446744073709551615"
+      },
+      {
+       "type": "pure",
+       "valueType": "u64",
+       "value": "0"
+      },
+      {
+       "type": "pure",
+       "valueType": "u64",
+       "value": "0"
+      },
+      {
+       "type": "object",
+       "objectType": "sharedObject",
+       "objectId": "0x0000000000000000000000000000000000000000000000000000000000000005",
+       "initialSharedVersion": "1",
+       "mutable": true
+      },
+      {
+       "type": "pure",
+       "valueType": "u64",
+       "value": "0"
+      },
+      {
+       "type": "pure",
+       "valueType": "address",
+       "value": "0x1fa4b4646d7ae3961ec983ab6ef1b61032a7f1c11e4d04d3cc98d97822c13334"
+      }
+     ],
+     "transactions": [
+      {
+       "MoveCall": {
+        "package": "0x34171e8092d831c1cb71d70b04389f9a0fec8af56f69e760b58d613d764c6945",
+        "module": "lending_market",
+        "function": "refresh_reserve_price",
+        "type_arguments": [
+         "0xf95b06141ed4a174f239417323bde3f209b972f5930d8521ea38a52aff3a6ddf::suilend::MAIN_POOL"
+        ],
+        "arguments": [
+         {
+          "Input": 0
+         },
+         {
+          "Input": 1
+         },
+         {
+          "Input": 2
+         },
+         {
+          "Input": 3
+         }
+        ]
+       }
+      },
+      {
+       "MoveCall": {
+        "package": "0x34171e8092d831c1cb71d70b04389f9a0fec8af56f69e760b58d613d764c6945",
+        "module": "lending_market",
+        "function": "withdraw_ctokens",
+        "type_arguments": [
+         "0xf95b06141ed4a174f239417323bde3f209b972f5930d8521ea38a52aff3a6ddf::suilend::MAIN_POOL",
+         "0x2::sui::SUI"
+        ],
+        "arguments": [
+         {
+          "Input": 0
+         },
+         {
+          "Input": 4
+         },
+         {
+          "Input": 5
+         },
+         {
+          "Input": 2
+         },
+         {
+          "Input": 6
+         }
+        ]
+       }
+      },
+      {
+       "MoveCall": {
+        "package": "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "module": "option",
+        "function": "none",
+        "type_arguments": [
+         "0xf95b06141ed4a174f239417323bde3f209b972f5930d8521ea38a52aff3a6ddf::lending_market::RateLimiterExemption<0xf95b06141ed4a174f239417323bde3f209b972f5930d8521ea38a52aff3a6ddf::suilend::MAIN_POOL, 0x2::sui::SUI>"
+        ]
+       }
+      },
+      {
+       "MoveCall": {
+        "package": "0x34171e8092d831c1cb71d70b04389f9a0fec8af56f69e760b58d613d764c6945",
+        "module": "lending_market",
+        "function": "redeem_ctokens_and_withdraw_liquidity_request",
+        "type_arguments": [
+         "0xf95b06141ed4a174f239417323bde3f209b972f5930d8521ea38a52aff3a6ddf::suilend::MAIN_POOL",
+         "0x2::sui::SUI"
+        ],
+        "arguments": [
+         {
+          "Input": 0
+         },
+         {
+          "Input": 7
+         },
+         {
+          "Input": 2
+         },
+         {
+          "NestedResult": [
+           1,
+           0
+          ]
+         },
+         {
+          "NestedResult": [
+           2,
+           0
+          ]
+         }
+        ]
+       }
+      },
+      {
+       "MoveCall": {
+        "package": "0x34171e8092d831c1cb71d70b04389f9a0fec8af56f69e760b58d613d764c6945",
+        "module": "lending_market",
+        "function": "unstake_sui_from_staker",
+        "type_arguments": [
+         "0xf95b06141ed4a174f239417323bde3f209b972f5930d8521ea38a52aff3a6ddf::suilend::MAIN_POOL"
+        ],
+        "arguments": [
+         {
+          "Input": 0
+         },
+         {
+          "Input": 8
+         },
+         {
+          "NestedResult": [
+           3,
+           0
+          ]
+         },
+         {
+          "Input": 9
+         }
+        ]
+       }
+      },
+      {
+       "MoveCall": {
+        "package": "0x34171e8092d831c1cb71d70b04389f9a0fec8af56f69e760b58d613d764c6945",
+        "module": "lending_market",
+        "function": "fulfill_liquidity_request",
+        "type_arguments": [
+         "0xf95b06141ed4a174f239417323bde3f209b972f5930d8521ea38a52aff3a6ddf::suilend::MAIN_POOL",
+         "0x2::sui::SUI"
+        ],
+        "arguments": [
+         {
+          "Input": 0
+         },
+         {
+          "Input": 10
+         },
+         {
+          "NestedResult": [
+           3,
+           0
+          ]
+         }
+        ]
+       }
+      },
+      {
+       "TransferObjects": [
+        [
+         {
+          "NestedResult": [
+           5,
+           0
+          ]
+         }
+        ],
+        {
+         "Input": 11
+        }
+       ]
+      }
+     ]
+    },
+    "sender": "0x1fa4b4646d7ae3961ec983ab6ef1b61032a7f1c11e4d04d3cc98d97822c13334",
+    "gasData": {
+     "payment": [
+      {
+       "objectId": "0x61d08a6eb3a5f8369ccccbe67be853d685a7208a1818ce3d4194da5dc6c98456",
+       "version": 692863175,
+       "digest": "3Qx5p9DtZ7A5KrxDxCLs6DtSTdteK5n2ioWWTK2Jtof3"
+      }
+     ],
+     "owner": "0x1fa4b4646d7ae3961ec983ab6ef1b61032a7f1c11e4d04d3cc98d97822c13334",
+     "price": "500",
+     "budget": "18122108"
+    }
+   },
+   "txSignatures": [
+    "AFGsretYP39MUW7Irza4IzAolxupatWo2UXtCylZ4wqOB0skk0nzP1dx4uQD9QmGrz3JwsvO9HdfAIeaaamZ+AyqhmDMxm16cYUwe7uDAJaC6/TW4u6ubpNvbtG2a1On7g=="
+   ]
+  },
+  "effects": {
+   "messageVersion": "v1",
+   "status": {
+    "status": "success"
+   },
+   "executedEpoch": "953",
+   "gasUsed": {
+    "computationCost": "1500000",
+    "storageCost": "1539228000",
+    "storageRebate": "1524084012",
+    "nonRefundableStorageFee": "15394788"
+   },
+   "modifiedAtVersions": [
+    {
+     "objectId": "0x0000000000000000000000000000000000000000000000000000000000000005",
+     "sequenceNumber": "692864225"
+    },
+    {
+     "objectId": "0x072b69fd68b22f78c0046cdbf8fec8a8962504863595c48f174a0cd6938297bd",
+     "sequenceNumber": "692863175"
+    },
+    {
+     "objectId": "0x38dc72c226a6db4af00aa6f35279c4baa9761610e1675b57cba46afd6352e6b6",
+     "sequenceNumber": "692864225"
+    },
+    {
+     "objectId": "0x51293f9bb0fe7e53b1b4a48b369a0c7fa881d2802c2ba8f959db78a60ad65245",
+     "sequenceNumber": "692863175"
+    },
+    {
+     "objectId": "0x5b890eaf2abcfa2ab90b77b8e6f3d5d8609586c3e583baf3dccd5af17edf48d1",
+     "sequenceNumber": "692864225"
+    },
+    {
+     "objectId": "0x61d08a6eb3a5f8369ccccbe67be853d685a7208a1818ce3d4194da5dc6c98456",
+     "sequenceNumber": "692863175"
+    },
+    {
+     "objectId": "0x84030d26d85eaa7035084a057f2f11f701b7e2e4eda87551becbc7c97505ece1",
+     "sequenceNumber": "692864225"
+    },
+    {
+     "objectId": "0xf767952c9cdee383c01efdf52143b36109122b110594838162954abe6a648bbf",
+     "sequenceNumber": "692864225"
+    }
+   ],
+   "sharedObjects": [
+    {
+     "objectId": "0x0000000000000000000000000000000000000000000000000000000000000005",
+     "version": 692864225,
+     "digest": "GNjvk8QPVSqeYLEPRN1nyShiZ5f9rSVnDvGaCo1SNJh5"
+    },
+    {
+     "objectId": "0x84030d26d85eaa7035084a057f2f11f701b7e2e4eda87551becbc7c97505ece1",
+     "version": 692864225,
+     "digest": "4893YvgPA4bYU8ro5zbeUmB3HCBBSZR9WryRFvheogrs"
+    },
+    {
+     "objectId": "0x0000000000000000000000000000000000000000000000000000000000000006",
+     "version": 633000492,
+     "digest": "2kYKHG9W3DhnZKYs8s2vhjh5nKW6ZNN3uTnwf4MKYaWF"
+    },
+    {
+     "objectId": "0x801dbc2f0053d34734814b2d6df491ce7807a725fe9a01ad74a07e9c51396c37",
+     "version": 692864223,
+     "digest": "H2M5EHRG4csaa9vYxQifsGq5p5C9mKYWFmaQu8FQD6n"
+    }
+   ],
+   "transactionDigest": "2injrFQZEaV3ZQR6i2CiQRLx3TsfHP1huopkhX56GPxR",
+   "created": [
+    {
+     "owner": {
+      "AddressOwner": "0x1fa4b4646d7ae3961ec983ab6ef1b61032a7f1c11e4d04d3cc98d97822c13334"
+     },
+     "reference": {
+      "objectId": "0x1be13ad52a005f00b9f5d809baacec69d5ab831f67cc471c061ccc32d2c7595c",
+      "version": 692864226,
+      "digest": "C661PPHJTox7HAZazF9aSPxiVh1eC4rzX1aDCEmb51Sr"
+     }
+    }
+   ],
+   "mutated": [
+    {
+     "owner": {
+      "Shared": {
+       "initial_shared_version": 1
+      }
+     },
+     "reference": {
+      "objectId": "0x0000000000000000000000000000000000000000000000000000000000000005",
+      "version": 692864226,
+      "digest": "BqNP9YyjjeEiHZsjF474YeB6LVN7QccYJWxy351CHXxc"
+     }
+    },
+    {
+     "owner": {
+      "ObjectOwner": "0x74de0276ce6c1a26ecb37d72a532a83b310fb0b04280197c5b71e07c96e992df"
+     },
+     "reference": {
+      "objectId": "0x072b69fd68b22f78c0046cdbf8fec8a8962504863595c48f174a0cd6938297bd",
+      "version": 692864226,
+      "digest": "3uuXCxofvjmTnGUZC3UmFRHTFYmSNA82eYGheq7F3LmX"
+     }
+    },
+    {
+     "owner": {
+      "ObjectOwner": "0x321d5e28d3a570882331b5f76b3bc9fd2650414d2264b8115606482e1fb76e97"
+     },
+     "reference": {
+      "objectId": "0x38dc72c226a6db4af00aa6f35279c4baa9761610e1675b57cba46afd6352e6b6",
+      "version": 692864226,
+      "digest": "42DdLYxoVbGe87WzbYaxQQbMkoqC5wZMYZqHp8WrSBjG"
+     }
+    },
+    {
+     "owner": {
+      "AddressOwner": "0x1fa4b4646d7ae3961ec983ab6ef1b61032a7f1c11e4d04d3cc98d97822c13334"
+     },
+     "reference": {
+      "objectId": "0x51293f9bb0fe7e53b1b4a48b369a0c7fa881d2802c2ba8f959db78a60ad65245",
+      "version": 692864226,
+      "digest": "97JWRpKwpSPQfk3kZQq5vgttUvJhracAzcJrxdeeAsSY"
+     }
+    },
+    {
+     "owner": {
+      "ObjectOwner": "0x0000000000000000000000000000000000000000000000000000000000000005"
+     },
+     "reference": {
+      "objectId": "0x5b890eaf2abcfa2ab90b77b8e6f3d5d8609586c3e583baf3dccd5af17edf48d1",
+      "version": 692864226,
+      "digest": "DTyARixMhAte6m59TDwNwE4MfrCxorMv8ehbvc66HLMU"
+     }
+    },
+    {
+     "owner": {
+      "AddressOwner": "0x1fa4b4646d7ae3961ec983ab6ef1b61032a7f1c11e4d04d3cc98d97822c13334"
+     },
+     "reference": {
+      "objectId": "0x61d08a6eb3a5f8369ccccbe67be853d685a7208a1818ce3d4194da5dc6c98456",
+      "version": 692864226,
+      "digest": "BFfZtEMhcBVJ3t4cuHw2Sit7Y6H9JDUvaGSUYECATH8K"
+     }
+    },
+    {
+     "owner": {
+      "Shared": {
+       "initial_shared_version": 76382579
+      }
+     },
+     "reference": {
+      "objectId": "0x84030d26d85eaa7035084a057f2f11f701b7e2e4eda87551becbc7c97505ece1",
+      "version": 692864226,
+      "digest": "HhMYjZ3VN2rAR3VdK3pdfa5bJpfxGmPdRczMWDaMFtrf"
+     }
+    },
+    {
+     "owner": {
+      "ObjectOwner": "0x321d5e28d3a570882331b5f76b3bc9fd2650414d2264b8115606482e1fb76e97"
+     },
+     "reference": {
+      "objectId": "0xf767952c9cdee383c01efdf52143b36109122b110594838162954abe6a648bbf",
+      "version": 692864226,
+      "digest": "HAAYacS3oF7JDiSzJkho8EZ5FDmXwtXNkkVRnKSJqZp"
+     }
+    }
+   ],
+   "gasObject": {
+    "owner": {
+     "AddressOwner": "0x1fa4b4646d7ae3961ec983ab6ef1b61032a7f1c11e4d04d3cc98d97822c13334"
+    },
+    "reference": {
+     "objectId": "0x61d08a6eb3a5f8369ccccbe67be853d685a7208a1818ce3d4194da5dc6c98456",
+     "version": 692864226,
+     "digest": "BFfZtEMhcBVJ3t4cuHw2Sit7Y6H9JDUvaGSUYECATH8K"
+    }
+   },
+   "eventsDigest": "7UnsasJKRUZM4wBhcy6M5HbinTYUk7KiPQygTUonnQRH",
+   "dependencies": [
+    "yqtELKLqAuSGkt6PX52KHKvmDKCrV3KCLxm6HAqL6DZ",
+    "3mzoGP9Yk9MfX49ZZkYpwPdEBfwFvH8NVq25FH2X8ZMp",
+    "48ZsEQ7GvDV2LzYjH6NMdwdp56geyAvJpviDourwGWqX",
+    "5qxQXMzijs5Q54F3c7DtJEW9ZEDPWuFDmWnPDLT9HJUQ",
+    "ACGVEHH3KvoMGuqouk9yjB7fxniUQUQB7ReZQGZih1uM",
+    "DvFH9Ho83aihAymq2XpQmgRxd56FRK5VmTpDPvSL7v1n",
+    "Faif9nnXmQvBvCb9BHRy49gNkzundwm5GRomy9d6Vbwa",
+    "HgNZBJfnTbN1cfmb8juxQ9Nf68uxSqf1iHX7TqkUcTRi"
+   ]
+  },
+  "events": [
+   {
+    "id": {
+     "txDigest": "2injrFQZEaV3ZQR6i2CiQRLx3TsfHP1huopkhX56GPxR",
+     "eventSeq": "0"
+    },
+    "packageId": "0x34171e8092d831c1cb71d70b04389f9a0fec8af56f69e760b58d613d764c6945",
+    "transactionModule": "lending_market",
+    "sender": "0x1fa4b4646d7ae3961ec983ab6ef1b61032a7f1c11e4d04d3cc98d97822c13334",
+    "type": "0xf95b06141ed4a174f239417323bde3f209b972f5930d8521ea38a52aff3a6ddf::obligation::ObligationDataEvent",
+    "parsedJson": {
+     "allowed_borrow_value_usd": {
+      "value": "0"
+     },
+     "bad_debt_usd": {
+      "value": "0"
+     },
+     "borrowing_isolated_asset": false,
+     "borrows": [],
+     "closable": false,
+     "deposited_value_usd": {
+      "value": "0"
+     },
+     "deposits": [],
+     "lending_market_id": "0x84030d26d85eaa7035084a057f2f11f701b7e2e4eda87551becbc7c97505ece1",
+     "obligation_id": "0x072b69fd68b22f78c0046cdbf8fec8a8962504863595c48f174a0cd6938297bd",
+     "super_unhealthy_borrow_value_usd": {
+      "value": "0"
+     },
+     "unhealthy_borrow_value_usd": {
+      "value": "0"
+     },
+     "unweighted_borrowed_value_usd": {
+      "value": "0"
+     },
+     "weighted_borrowed_value_upper_bound_usd": {
+      "value": "0"
+     },
+     "weighted_borrowed_value_usd": {
+      "value": "0"
+     }
+    },
+    "bcsEncoding": "base64",
+    "bcs": "hAMNJtheqnA1CEoFfy8R9wG34uTtqHVRvsvHyXUF7OEHK2n9aLIveMAEbNv4/sioliUEhjWVxI8XSgzWk4KXvQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+   },
+   {
+    "id": {
+     "txDigest": "2injrFQZEaV3ZQR6i2CiQRLx3TsfHP1huopkhX56GPxR",
+     "eventSeq": "1"
+    },
+    "packageId": "0x34171e8092d831c1cb71d70b04389f9a0fec8af56f69e760b58d613d764c6945",
+    "transactionModule": "lending_market",
+    "sender": "0x1fa4b4646d7ae3961ec983ab6ef1b61032a7f1c11e4d04d3cc98d97822c13334",
+    "type": "0xf95b06141ed4a174f239417323bde3f209b972f5930d8521ea38a52aff3a6ddf::lending_market::WithdrawEvent",
+    "parsedJson": {
+     "coin_type": {
+      "name": "0000000000000000000000000000000000000000000000000000000000000002::sui::SUI"
+     },
+     "ctoken_amount": "969991680",
+     "lending_market_id": "0x84030d26d85eaa7035084a057f2f11f701b7e2e4eda87551becbc7c97505ece1",
+     "obligation_id": "0x072b69fd68b22f78c0046cdbf8fec8a8962504863595c48f174a0cd6938297bd",
+     "reserve_id": "0x321d5e28d3a570882331b5f76b3bc9fd2650414d2264b8115606482e1fb76e97"
+    },
+    "bcsEncoding": "base64",
+    "bcs": "hAMNJtheqnA1CEoFfy8R9wG34uTtqHVRvsvHyXUF7OFKMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMjo6c3VpOjpTVUkyHV4o06VwiCMxtfdrO8n9JlBBTSJkuBFWBkguH7dulwcraf1osi94wARs2/j+yKiWJQSGNZXEjxdKDNaTgpe9AObQOQAAAAA="
+   },
+   {
+    "id": {
+     "txDigest": "2injrFQZEaV3ZQR6i2CiQRLx3TsfHP1huopkhX56GPxR",
+     "eventSeq": "2"
+    },
+    "packageId": "0x34171e8092d831c1cb71d70b04389f9a0fec8af56f69e760b58d613d764c6945",
+    "transactionModule": "lending_market",
+    "sender": "0x1fa4b4646d7ae3961ec983ab6ef1b61032a7f1c11e4d04d3cc98d97822c13334",
+    "type": "0xf95b06141ed4a174f239417323bde3f209b972f5930d8521ea38a52aff3a6ddf::reserve::ReserveAssetDataEvent",
+    "parsedJson": {
+     "available_amount": {
+      "value": "22032370445615311000000000000000000"
+     },
+     "available_amount_usd_estimate": {
+      "value": "33119606978578213491831460"
+     },
+     "borrow_apr": {
+      "value": "59762774882200983"
+     },
+     "borrowed_amount": {
+      "value": "51797333713571445911121319800970352"
+     },
+     "borrowed_amount_usd_estimate": {
+      "value": "77863039719956716879742918"
+     },
+     "coin_type": {
+      "name": "0000000000000000000000000000000000000000000000000000000000000002::sui::SUI"
+     },
+     "ctoken_supply": "71580801018305101",
+     "cumulative_borrow_rate": {
+      "value": "1119209392860398823"
+     },
+     "lending_market_id": "0x84030d26d85eaa7035084a057f2f11f701b7e2e4eda87551becbc7c97505ece1",
+     "price": {
+      "value": "1503224860000000000"
+     },
+     "price_last_update_timestamp_s": "1763670943",
+     "reserve_id": "0x321d5e28d3a570882331b5f76b3bc9fd2650414d2264b8115606482e1fb76e97",
+     "smoothed_price": {
+      "value": "1495125450000000000"
+     },
+     "supply_amount": {
+      "value": "73795279724824974056641910414342814"
+     },
+     "supply_amount_usd_estimate": {
+      "value": "110930899033010860150799167"
+     },
+     "supply_apr": {
+      "value": "33542622763845652"
+     }
+    },
+    "bcsEncoding": "base64",
+    "bcs": "hAMNJtheqnA1CEoFfy8R9wG34uTtqHVRvsvHyXUF7OFKMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMjo6c3VpOjpTVUkyHV4o06VwiCMxtfdrO8n9JlBBTSJkuBFWBkguH7dulwAA3FnWi40UBTNxnEc+BAAAAAAAAAAAAAAAAAAAAAAAnnod06rOQLyATe5gYzYOAAAAAAAAAAAAAAAAAAAAAABwnLlO+4jWIj3O1UPO+QkAAAAAAAAAAAAAAAAAAAAAAKTyNcyVSu19WWUbAAAAAAAAAAAAAAAAAAAAAAAAAAAAP7twlAY3HBaIwlsAAAAAAAAAAAAAAAAAAAAAAAAAAADGB+I1sxNO1yNoQAAAAAAAAAAAAAAAAAAAAAAAAAAAAJctpVftUdQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFIisctYqdwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABNGm/5W07+AOeEuVIDO4gPAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABjWtQuH3BQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAZOXdrMC/FAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJ97H2kAAAAA"
+   },
+   {
+    "id": {
+     "txDigest": "2injrFQZEaV3ZQR6i2CiQRLx3TsfHP1huopkhX56GPxR",
+     "eventSeq": "3"
+    },
+    "packageId": "0x34171e8092d831c1cb71d70b04389f9a0fec8af56f69e760b58d613d764c6945",
+    "transactionModule": "lending_market",
+    "sender": "0x1fa4b4646d7ae3961ec983ab6ef1b61032a7f1c11e4d04d3cc98d97822c13334",
+    "type": "0xf95b06141ed4a174f239417323bde3f209b972f5930d8521ea38a52aff3a6ddf::reserve::ReserveAssetDataEvent",
+    "parsedJson": {
+     "available_amount": {
+      "value": "22032369445615223000000000000000000"
+     },
+     "available_amount_usd_estimate": {
+      "value": "33119605475353221208043780"
+     },
+     "borrow_apr": {
+      "value": "59762775149881548"
+     },
+     "borrowed_amount": {
+      "value": "51797333713571445911121319800970352"
+     },
+     "borrowed_amount_usd_estimate": {
+      "value": "77863039719956716879742918"
+     },
+     "coin_type": {
+      "name": "0000000000000000000000000000000000000000000000000000000000000002::sui::SUI"
+     },
+     "ctoken_supply": "71580800048313421",
+     "cumulative_borrow_rate": {
+      "value": "1119209392860398823"
+     },
+     "lending_market_id": "0x84030d26d85eaa7035084a057f2f11f701b7e2e4eda87551becbc7c97505ece1",
+     "price": {
+      "value": "1503224860000000000"
+     },
+     "price_last_update_timestamp_s": "1763670943",
+     "reserve_id": "0x321d5e28d3a570882331b5f76b3bc9fd2650414d2264b8115606482e1fb76e97",
+     "smoothed_price": {
+      "value": "1495125450000000000"
+     },
+     "supply_amount": {
+      "value": "73795278724824886056641910414342814"
+     },
+     "supply_amount_usd_estimate": {
+      "value": "110930897529785867867011487"
+     },
+     "supply_apr": {
+      "value": "33542623368409066"
+     }
+    },
+    "bcsEncoding": "base64",
+    "bcs": "hAMNJtheqnA1CEoFfy8R9wG34uTtqHVRvsvHyXUF7OFKMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMjo6c3VpOjpTVUkyHV4o06VwiCMxtfdrO8n9JlBBTSJkuBFWBkguH7dulwAAfOfXPX6vwwQ2mUc+BAAAAAAAAAAAAAAAAAAAAAAAnnq9YKyAMVc/H7NdYzYOAAAAAAAAAAAAAAAAAAAAAABwnLlO+4jWIj3O1UPO+QkAAAAAAAAAAAAAAAAAAAAAAARxpUlrwxBpWWUbAAAAAAAAAAAAAAAAAAAAAAAAAAAAnzngEdyvPwGIwlsAAAAAAAAAAAAAAAAAAAAAAAAAAADGB+I1sxNO1yNoQAAAAAAAAAAAAAAAAAAAAAAAAAAAAMyomWftUdQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA6m+1ltYqdwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABNNJ6/W07+AOeEuVIDO4gPAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABjWtQuH3BQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAZOXdrMC/FAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJ97H2kAAAAA"
+   },
+   {
+    "id": {
+     "txDigest": "2injrFQZEaV3ZQR6i2CiQRLx3TsfHP1huopkhX56GPxR",
+     "eventSeq": "4"
+    },
+    "packageId": "0x34171e8092d831c1cb71d70b04389f9a0fec8af56f69e760b58d613d764c6945",
+    "transactionModule": "lending_market",
+    "sender": "0x1fa4b4646d7ae3961ec983ab6ef1b61032a7f1c11e4d04d3cc98d97822c13334",
+    "type": "0xf95b06141ed4a174f239417323bde3f209b972f5930d8521ea38a52aff3a6ddf::lending_market::RedeemEvent",
+    "parsedJson": {
+     "coin_type": {
+      "name": "0000000000000000000000000000000000000000000000000000000000000002::sui::SUI"
+     },
+     "ctoken_amount": "969991680",
+     "lending_market_id": "0x84030d26d85eaa7035084a057f2f11f701b7e2e4eda87551becbc7c97505ece1",
+     "liquidity_amount": "1000000088",
+     "reserve_id": "0x321d5e28d3a570882331b5f76b3bc9fd2650414d2264b8115606482e1fb76e97"
+    },
+    "bcsEncoding": "base64",
+    "bcs": "hAMNJtheqnA1CEoFfy8R9wG34uTtqHVRvsvHyXUF7OFKMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMjo6c3VpOjpTVUkyHV4o06VwiCMxtfdrO8n9JlBBTSJkuBFWBkguH7dulwDm0DkAAAAAWMqaOwAAAAA="
+   },
+   {
+    "id": {
+     "txDigest": "2injrFQZEaV3ZQR6i2CiQRLx3TsfHP1huopkhX56GPxR",
+     "eventSeq": "5"
+    },
+    "packageId": "0x34171e8092d831c1cb71d70b04389f9a0fec8af56f69e760b58d613d764c6945",
+    "transactionModule": "lending_market",
+    "sender": "0x1fa4b4646d7ae3961ec983ab6ef1b61032a7f1c11e4d04d3cc98d97822c13334",
+    "type": "0x3::validator::UnstakingRequestEvent",
+    "parsedJson": {
+     "pool_id": "0x077f98f271dc4eeb57c266442b0e6b837449539b748fc5d7b52d5c1da1cec6db",
+     "principal_amount": "1000000088",
+     "reward_amount": "0",
+     "stake_activation_epoch": "954",
+     "staker_address": "0x1fa4b4646d7ae3961ec983ab6ef1b61032a7f1c11e4d04d3cc98d97822c13334",
+     "unstaking_epoch": "953",
+     "validator_address": "0xce8e537664ba5d1d5a6a857b17bd142097138706281882be6805e17065ecde89"
+    },
+    "bcsEncoding": "base64",
+    "bcs": "B3+Y8nHcTutXwmZEKw5rg3RJU5t0j8XXtS1cHaHOxtvOjlN2ZLpdHVpqhXsXvRQglxOHBigYgr5oBeFwZezeiR+ktGRteuOWHsmDq27xthAyp/HBHk0E08yY2XgiwTM0ugMAAAAAAAC5AwAAAAAAAFjKmjsAAAAAAAAAAAAAAAA="
+   },
+   {
+    "id": {
+     "txDigest": "2injrFQZEaV3ZQR6i2CiQRLx3TsfHP1huopkhX56GPxR",
+     "eventSeq": "6"
+    },
+    "packageId": "0x34171e8092d831c1cb71d70b04389f9a0fec8af56f69e760b58d613d764c6945",
+    "transactionModule": "lending_market",
+    "sender": "0x1fa4b4646d7ae3961ec983ab6ef1b61032a7f1c11e4d04d3cc98d97822c13334",
+    "type": "0xb0575765166030556a6eafd3b1b970eba8183ff748860680245b9edd41c716e7::events::Event<0xb0575765166030556a6eafd3b1b970eba8183ff748860680245b9edd41c716e7::liquid_staking::RedeemEvent>",
+    "parsedJson": {
+     "event": {
+      "fee_amount": "0",
+      "lst_amount_in": "978342606",
+      "sui_amount_out": "1000000088",
+      "typename": {
+       "name": "b87cea7e4220461e35dff856185814d6a37ef479ce895ffbe4efa1d1af5aacbc::sprungsui::SPRUNGSUI"
+      }
+     }
+    },
+    "bcsEncoding": "base64",
+    "bcs": "VmI4N2NlYTdlNDIyMDQ2MWUzNWRmZjg1NjE4NTgxNGQ2YTM3ZWY0NzljZTg5NWZmYmU0ZWZhMWQxYWY1YWFjYmM6OnNwcnVuZ3N1aTo6U1BSVU5HU1VJzlJQOgAAAABYypo7AAAAAAAAAAAAAAAA"
+   }
+  ],
+  "balanceChanges": [
+   {
+    "owner": {
+     "AddressOwner": "0x1fa4b4646d7ae3961ec983ab6ef1b61032a7f1c11e4d04d3cc98d97822c13334"
+    },
+    "coinType": "0x2::sui::SUI",
+    "amount": "983356100"
+   }
+  ],
+  "timestampMs": "1763670943891",
+  "checkpoint": "214342060"
+ },
+ "expectedEvents": [
+  {
+   "type": "lend_supply",
+   "subtype": "withdraw",
+   "chain": "sui",
+   "txHash": "2injrFQZEaV3ZQR6i2CiQRLx3TsfHP1huopkhX56GPxR",
+   "logIndex": 4,
+   "emissionSeq": 0,
+   "timestamp": 1763670943,
+   "wallet": "0x1fa4b4646d7ae3961ec983ab6ef1b61032a7f1c11e4d04d3cc98d97822c13334",
+   "handlerId": "suilend",
+   "receivedAsset": "SUI",
+   "receivedAmount": "1000000088"
+  }
+ ]
+}

@@ -47,6 +47,8 @@ interface BaseFixture {
   walletsContext: string[];
   blockNumber: number;
   raw: BaseRawJson;
+  /** Expected decode outcome; defaults to 'decoded'. 'skipped' = ours but deliberately no events (e.g. gauge NFT stake). */
+  expectedStatus?: 'decoded' | 'skipped';
   expectedEvents: FixtureEvent[];
 }
 
@@ -85,7 +87,7 @@ describe('base golden fixtures (hand-labeled real txs — RED until 1A handlers 
       const registry = createDefaultRegistry(db, { wallets: { base: fixture.walletsContext } });
       const result = registry.decodeAndPersist('base', fixture.txHash);
 
-      expect(result.status).toBe('decoded');
+      expect(result.status).toBe(fixture.expectedStatus ?? 'decoded');
       if (result.status !== 'decoded') return;
 
       expect(result.events).toHaveLength(fixture.expectedEvents.length);

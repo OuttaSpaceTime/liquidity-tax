@@ -21,7 +21,7 @@ const FIXTURE_DIR = join(import.meta.dir, '../fixtures/solana');
 
 interface GoldenExpectedEvent {
   type: TaxEvent['type'];
-  subtype: string;
+  subtype: TaxEvent['subtype'];
   logIndex: number;
   emissionSeq: number;
   timestamp: number;
@@ -30,8 +30,8 @@ interface GoldenExpectedEvent {
   sentAmount?: string;
   receivedAsset?: string;
   receivedAmount?: string;
-  positionId?: string;
-  flags?: string[];
+  positionId?: TaxEvent['positionId'];
+  flags?: TaxEvent['flags'];
 }
 
 interface GoldenFixture {
