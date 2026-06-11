@@ -78,6 +78,23 @@ describe('importEurCache', () => {
     expect(summary).toMatchObject({ written: 0, skippedNoUsd: 2 });
   });
 
+  it('overwrites USD-only rows (eur_price NULL) instead of skipping them', async () => {
+    const { db } = createTestDb();
+    // A defillama-sourced backfill row: USD present, EUR missing. The cache
+    // import must treat it as missing, not as satisfied.
+    upsertPrices(db, [
+      { asset: 'ETH', date: '2025-07-04', usdPrice: 2100, eurPrice: null, source: 'defillama' },
+    ]);
+    const { defillama } = fakeLlama(2200);
+
+    await importEurCache(db, SAMPLE, { defillama });
+
+    expect(getPrice(db, 'ETH', '2025-07-04')).toMatchObject({
+      eurPrice: 2138.75,
+      source: EUR_CACHE_SOURCE,
+    });
+  });
+
   it('is idempotent — already-seeded pairs cost no API calls on re-run', async () => {
     const { db } = createTestDb();
     const first = fakeLlama(2200);

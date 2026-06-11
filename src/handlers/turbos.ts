@@ -32,14 +32,15 @@ import {
  *   token leg (`emissionSeq` counts nonzero legs, coin A before coin B);
  *   zero-amount legs/events (Turbos' burn(0) fee-poke, inactive reward
  *   vaults) emit nothing.
- * - `positionId` = `sui:turbos:<in-pool position object id>` resolved via the
- *   same-tx `MintNftEvent`/`BurnNftEvent` (`nft_address` -> `position_id`,
- *   where `nft_address` == the pool event's `owner`). Same-tx NFT mint/burn
- *   also decides the subtype (open_position/close_position vs
- *   add_liquidity/remove_liquidity). Without an NFT-link event (harvest-only
- *   or increase txs) the positionId falls back to the position-NFT object id
- *   (`owner`) — cross-tx unification of the two id spaces is a
- *   positions-repo follow-up.
+ * - `positionId` = `sui:turbos:<position-NFT object id>` (the pool events'
+ *   `owner` field) in ALL cases. The NFT id is the one id present in every
+ *   lifecycle tx — open (MintNftEvent.nft_address), harvest/increase (the
+ *   `owner` of Collect/Mint events), close (BurnNftEvent.nft_address) — so
+ *   one CLMM lifecycle reduces to ONE position row. The in-pool position id
+ *   from Mint/BurnNftEvent is NOT used (it never appears in harvest-only
+ *   txs and would split the lifecycle into phantom rows). Same-tx NFT
+ *   mint/burn still decides the subtype (open_position/close_position vs
+ *   add_liquidity/remove_liquidity).
  * - Pool token order (amount_a/amount_b -> coin types) comes from the Turbos
  *   Move calls' `type_arguments` (`[CoinA, CoinB, FeeType]`), keyed by the
  *   call's pool object input; asset = last `::` segment of the coin type
@@ -209,21 +210,19 @@ export const turbosHandler: Handler = {
     const events = suiEvents(raw);
     const poolCoins = buildPoolCoins(raw);
 
-    // Pass 1 — NFT lifecycle links: nft_address -> in-pool position id, and
-    // which NFTs were minted/burned in THIS tx (decides open/close subtypes).
-    const nftToPosition = new Map<string, string>();
+    // Pass 1 — NFT lifecycle markers: which NFTs were minted/burned in THIS
+    // tx (decides open/close subtypes). The positionId is ALWAYS the NFT
+    // object id — stable across open/harvest/increase/close txs (see header).
     const mintedNfts = new Set<string>();
     const burnedNfts = new Set<string>();
     for (const event of events) {
       const key = event.type === undefined ? undefined : TYPE_TO_KEY.get(event.type);
       if (key !== 'mintNft' && key !== 'burnNft' && key !== 'burnPosition') continue;
-      const payload = event.parsedJson as { nft_address?: string; position_id?: string };
-      if (payload.nft_address === undefined || payload.position_id === undefined) continue;
-      nftToPosition.set(payload.nft_address, payload.position_id);
+      const payload = event.parsedJson as { nft_address?: string };
+      if (payload.nft_address === undefined) continue;
       (key === 'mintNft' ? mintedNfts : burnedNfts).add(payload.nft_address);
     }
-    const positionIdOf = (nftAddress: string): PositionId =>
-      `sui:${HANDLER_ID}:${nftToPosition.get(nftAddress) ?? nftAddress}`;
+    const positionIdOf = (nftAddress: string): PositionId => `sui:${HANDLER_ID}:${nftAddress}`;
 
     // Pass 2 — aggregator route totals (zap swaps): first matching suffix wins.
     const aggregatorIndexes = new Set<number>();
@@ -288,9 +287,22 @@ export const turbosHandler: Handler = {
       // Dominant-protocol convention: when an earlier handler (navi/suilend —
       // turbos registers last on sui) already claimed this aggregator summary
       // event, the route is theirs and our pool was just one hop — defer.
+      // Deduplication is per ROUTE, not per index: one route can emit TWO
+      // mirroring summaries (turbos-02: universal_router::Swap + settle::Swap),
+      // and the earlier handler may have claimed the OTHER mirror — comparing
+      // the trade totals catches that where the index comparison cannot.
       if (aggregatorIndexes.has(index)) {
-        if (ctx.decodedEvents.some((claimed) => claimed.logIndex === index)) continue;
         const payload = event.parsedJson as AggregatorSwapPayload;
+        const sentAmount = BigInt(payload.amount_in ?? '0');
+        const receivedAmount = BigInt(payload.amount_out ?? '0');
+        const alreadyClaimed = ctx.decodedEvents.some(
+          (claimed) =>
+            claimed.logIndex === index ||
+            (claimed.type === 'swap' &&
+              claimed.sentAmount === sentAmount &&
+              claimed.receivedAmount === receivedAmount),
+        );
+        if (alreadyClaimed) continue;
         const flags: Flag[] | undefined = hasPositionActivity ? ['rebalance_embedded'] : undefined;
         taxEvents.push({
           ...base,

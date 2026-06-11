@@ -139,7 +139,10 @@
       "receivedAsset": "WETH",
       "receivedAmount": "4684589544",
       "positionId": "base:uniswap_v3:5221210",
-      "timestamp": 1781149373
+      "timestamp": 1781149373,
+      "flags": [
+        "collect_without_same_tx_decrease"
+      ]
     }
   ]
 }

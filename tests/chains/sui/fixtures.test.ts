@@ -53,6 +53,12 @@ interface SuiFixture {
   blockNumber: number;
   /** Full SuiTransactionBlockResponse exactly as stored in raw_txs.raw_json. */
   raw: { timestampMs?: string | null } & Record<string, unknown>;
+  /**
+   * Expected decode outcome; defaults to 'decoded'. 'unclassified' = the tx
+   * carries taxable legs no handler decodes yet (e.g. a foreign-protocol swap
+   * inside an owned PTB, navi-04) — manual queue, never a silent partial decode.
+   */
+  expectedStatus?: 'decoded' | 'unclassified';
   expectedEvents: FixtureEvent[];
 }
 
@@ -102,7 +108,7 @@ describe('sui golden fixtures (hand-labeled real txs — RED until 1C handlers l
       const registry = createDefaultRegistry(db, { wallets: { sui: fixture.walletsContext } });
       const result = registry.decodeAndPersist('sui', fixture.txHash);
 
-      expect(result.status).toBe('decoded');
+      expect(result.status).toBe(fixture.expectedStatus ?? 'decoded');
       if (result.status !== 'decoded') return;
 
       expect(result.events).toHaveLength(fixture.expectedEvents.length);
@@ -110,6 +116,9 @@ describe('sui golden fixtures (hand-labeled real txs — RED until 1C handlers l
         const actual = result.events[i]!;
         const { sentAmount, receivedAmount, ...fields } = expected;
         expect(actual).toMatchObject(fields as Record<string, unknown>);
+        // Strict flags: hand-labels omitting `flags` mean NO flags — spurious
+        // handler flags directly drive tax treatment and must fail here.
+        expect(actual.flags ?? []).toEqual(fields.flags ?? []);
         if (sentAmount !== undefined) expect(actual.sentAmount).toBe(BigInt(sentAmount));
         if (receivedAmount !== undefined) {
           expect(actual.receivedAmount).toBe(BigInt(receivedAmount));

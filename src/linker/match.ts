@@ -94,10 +94,14 @@ function bridgeCandidate(out: TransferLeg, inn: TransferLeg): Candidate | undefi
   const inAsset = canonicalAsset(inn.chain, inn.asset);
   if (outAsset === undefined || inAsset === undefined) return undefined;
   if (outAsset.symbol !== inAsset.symbol) return undefined;
-  const outValue = Number(out.amount) / 10 ** outAsset.decimals;
-  const inValue = Number(inn.amount) / 10 ** inAsset.decimals;
-  if (outValue <= 0 || inValue <= 0) return undefined;
-  const amountSimilarity = Math.min(outValue, inValue) / Math.max(outValue, inValue);
+  // Decimals-normalized cross-multiplication keeps the ratio bigint-exact
+  // (Number(amount) is lossy above 2^53 — any 18-decimals amount over ~9 tokens).
+  const outScaled = out.amount * 10n ** BigInt(inAsset.decimals);
+  const inScaled = inn.amount * 10n ** BigInt(outAsset.decimals);
+  if (outScaled <= 0n || inScaled <= 0n) return undefined;
+  const [minScaled, maxScaled] =
+    outScaled < inScaled ? [outScaled, inScaled] : [inScaled, outScaled];
+  const amountSimilarity = Number((minScaled * 1_000_000n) / maxScaled) / 1_000_000;
   if (amountSimilarity < MIN_BRIDGE_AMOUNT_SIMILARITY) return undefined;
   const timeProximity = 1 - dt / LINK_WINDOW_SECONDS;
   const confidence = Math.round((0.7 * amountSimilarity + 0.3 * timeProximity) * 10_000) / 10_000;

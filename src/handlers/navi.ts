@@ -272,6 +272,7 @@ function normalizeCoinType(coinType: string): string {
 }
 
 const SYMBOL_BY_ASSET_ID = new Map(NAVI_ASSETS.map((a) => [a.id, a.symbol]));
+const ASSET_BY_ID = new Map(NAVI_ASSETS.map((a) => [a.id, a]));
 const SYMBOL_BY_COIN_TYPE = new Map(
   NAVI_ASSETS.map((a) => [normalizeCoinType(a.coinType), a.symbol]),
 );
@@ -457,6 +458,23 @@ export const naviHandler: Handler = {
       legs: PoolLeg[],
     ): string | undefined => {
       const coinType = pairPoolLeg(legs, eventIndex, amount);
+      // Pool-leg pairing matches on exact amount only — two same-raw-amount
+      // legs of DIFFERENT coins can hand us the wrong leg. When the static
+      // registry knows the reserve, the paired coin type must agree with it;
+      // a contradiction means the pairing picked a colliding leg → manual
+      // queue instead of a silent asset mislabel.
+      const registryAsset = ASSET_BY_ID.get(reserve);
+      if (
+        coinType !== undefined &&
+        registryAsset !== undefined &&
+        normalizeCoinType(coinType) !== normalizeCoinType(registryAsset.coinType)
+      ) {
+        problems.push(
+          `event[${eventIndex}]: paired pool leg coin '${coinType}' contradicts reserve ${reserve} ` +
+            `(${registryAsset.symbol}) — same-amount pairing collision, label manually`,
+        );
+        return undefined;
+      }
       const paired = coinType === undefined ? undefined : symbolForCoinType(coinType);
       return paired ?? SYMBOL_BY_ASSET_ID.get(reserve);
     };
@@ -681,6 +699,28 @@ export const naviHandler: Handler = {
       }
       // Everything else (pool companions, logic::StateUpdated, oracle updates,
       // other protocols' events sharing the PTB) emits nothing here.
+    }
+
+    // Owned PTB containing a swap-shaped event no handler recognizes (e.g. a
+    // Cetus pool::SwapEvent disposing the withdrawn collateral, navi-04):
+    // returning kind:'ok' would mark the tx 'decoded' and silently drop a
+    // §23-relevant disposal. Until a Cetus/generic Sui swap rule lands, such
+    // txs go to the manual queue. (Conservative: an aggregator summary that a
+    // LATER handler would claim also trips this — manual review, never loss.)
+    const sender = (raw.rawJson as { transaction?: { data?: { sender?: string } } }).transaction
+      ?.data?.sender;
+    if (sender !== undefined && ctx.wallets.has(sender)) {
+      for (const [index, event] of events.entries()) {
+        const type = event.type ?? '';
+        if (type === '' || isHandledType(type)) continue;
+        const structName = type.split('<')[0]!.split('::').pop() ?? '';
+        if (/swap/i.test(structName)) {
+          problems.push(
+            `unrecognized swap leg '${type.split('<')[0]}' at event index ${index} in an owned ` +
+              'PTB — foreign-protocol disposal, label manually (no Cetus/generic Sui swap handler yet)',
+          );
+        }
+      }
     }
 
     // Partial decodes must not silently understate taxable activity.

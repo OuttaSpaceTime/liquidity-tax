@@ -1,6 +1,6 @@
 import type { BaseRawJson, RawRpcLog } from '../chains/base/ingest';
 import type { DecodeContext, DecodeResult, Handler, RawTx } from '../decoder/types';
-import type { Chain, PositionId, Protocol, TaxEvent } from '../types/event';
+import type { Chain, Flag, PositionId, Protocol, TaxEvent } from '../types/event';
 
 /**
  * Shared decoder base for Uniswap-V3-style CLMMs on EVM ([1A.3], issue #7).
@@ -296,6 +296,14 @@ export abstract class UniV3LikeHandler implements Handler {
       if (feeAmounts.amount0 < 0n || feeAmounts.amount1 < 0n) {
         return `${this.id}: Collect amounts smaller than DecreaseLiquidity amounts (tokenId ${group.tokenId}) — fee split impossible`;
       }
+      // A Collect with no same-tx DecreaseLiquidity is USUALLY a pure fee
+      // harvest, but it also pays out tokensOwed of a decrease from an EARLIER
+      // tx (which decoded to unclassified — see above). The fee/principal
+      // split cannot tell the two apart offline, so the legs are flagged:
+      // the §23/§22 engine and the TUI must pair flagged collects with any
+      // unresolved prior-decrease sibling before trusting them as income.
+      const collectOnlyFlags: Flag[] | undefined =
+        group.decreases.length === 0 ? ['collect_without_same_tx_decrease'] : undefined;
       for (const leg of nonzeroLegs(feeAmounts, tokens)) {
         events.push({
           type: 'lp_fee',
@@ -309,6 +317,7 @@ export abstract class UniV3LikeHandler implements Handler {
           receivedAsset: this.assetSymbol(leg.token),
           receivedAmount: leg.amount,
           positionId,
+          ...(collectOnlyFlags === undefined ? {} : { flags: collectOnlyFlags }),
           handlerId: this.id,
           handlerVersion: this.version,
         });

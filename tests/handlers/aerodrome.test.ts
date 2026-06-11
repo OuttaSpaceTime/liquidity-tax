@@ -97,6 +97,9 @@ describe('aerodrome handler — golden fixtures (real Base txs)', () => {
         const actual = result.events[i]!;
         const { sentAmount, receivedAmount, ...fields } = expected;
         expect(actual).toMatchObject(fields as Record<string, unknown>);
+        // Strict flags: hand-labels omitting `flags` mean NO flags — spurious
+        // handler flags directly drive tax treatment and must fail here.
+        expect(actual.flags ?? []).toEqual(fields.flags ?? []);
         if (sentAmount !== undefined) expect(actual.sentAmount).toBe(BigInt(sentAmount));
         if (receivedAmount !== undefined) {
           expect(actual.receivedAmount).toBe(BigInt(receivedAmount));
@@ -118,6 +121,49 @@ describe('aerodrome handler — golden fixtures (real Base txs)', () => {
         fetchedAt: 0,
       };
       expect(handler.matches(raw as never)).toBe(false);
+    }
+  });
+});
+
+describe('aerodrome handler — ownership gates (review regressions)', () => {
+  // These two scenarios are absent from own history by construction (foreign
+  // actor / keeper sender), so they are reproduced as in-memory variants of
+  // the committed REAL fixtures instead of separate fixture files.
+  const pad32 = (address: string): string => `0x${'0'.repeat(24)}${address.slice(2)}`;
+  const TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
+
+  test("a third party's gauge claim batched with an unrelated incoming transfer is NOT our income", () => {
+    const fixture = loadFixture('aerodrome-04-gauge-claim-direct.json');
+    const me = '0x00000000000000000000000000000000000beef1';
+    const stranger = '0x00000000000000000000000000000000000feed2';
+    // The original claimer stays in the receipt; we merely receive an
+    // unrelated USDC transfer in the same tx (why it landed in raw_txs).
+    fixture.raw.receipt.logs.push({
+      address: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
+      topics: [TRANSFER_TOPIC, pad32(stranger), pad32(me)],
+      data: '0x0000000000000000000000000000000000000000000000000000000005f5e100',
+      logIndex: '0x7ff',
+    });
+    fixture.walletsContext = [me];
+    (fixture.raw as { addresses?: string[] }).addresses = [me];
+
+    const result = decodeFixture(fixture);
+    // Foreign gauge activity: nothing of ours decodes — never lp_reward income.
+    expect(result.status).toBe('skipped');
+  });
+
+  test('keeper-triggered Sickle harvest with no owner leg goes to the manual queue, not to the keeper', () => {
+    const fixture = loadFixture('aerodrome-06-sickle-gauge-claim-skim.json');
+    const keeper = '0x00000000000000000000000000000000000ca11e';
+    fixture.raw.tx.from = keeper;
+    // Remove the Sickle→EOA net forward (log 0x166): rewards stay in the
+    // Sickle, so no configured wallet appears anywhere in the transfers.
+    fixture.raw.receipt.logs = fixture.raw.receipt.logs.filter((log) => log.logIndex !== '0x166');
+
+    const result = decodeFixture(fixture);
+    expect(result.status).toBe('unclassified');
+    if (result.status === 'unclassified') {
+      expect(result.reason).toContain('owner');
     }
   });
 });

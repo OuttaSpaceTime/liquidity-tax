@@ -47,6 +47,20 @@ export function collectNeededPairs(db: Db): NeededPair[] {
   `);
 }
 
+/**
+ * (asset, date) pairs already priced USD-only (`eur_price IS NULL` — the
+ * DefiLlama fallback writes these). EUR is the load-bearing column for the
+ * German §23/§22 report, so these rows are re-pricing candidates, NOT
+ * satisfied pairs.
+ */
+export function collectEurMissingPairs(db: Db): NeededPair[] {
+  return db.all<NeededPair>(sql`
+    SELECT asset, date FROM prices
+    WHERE eur_price IS NULL
+    ORDER BY date, asset
+  `);
+}
+
 /** Group needed pairs by (cgId, date) so aliased assets share one API call. */
 export function buildFetchPlan(pairs: readonly NeededPair[]): FetchPlan {
   const byKey = new Map<string, FetchTask>();

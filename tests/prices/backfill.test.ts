@@ -2,7 +2,7 @@ import { describe, it, expect } from 'bun:test';
 import { createTestDb } from '../helpers/db';
 import { insertEvent } from './helpers';
 import { backfillPrices, type BackfillDeps } from '../../src/prices/backfill';
-import { getPrice, countPrices } from '../../src/prices/repo';
+import { getPrice, countPrices, upsertPrices } from '../../src/prices/repo';
 import { CoinGeckoRateLimitError, type HistoryResult } from '../../src/prices/coingecko';
 
 // 2025-07-05 00:00:00 UTC.
@@ -35,6 +35,44 @@ function fakeClients(cgResponder: CgResponder, llamaPrice: number | null = null)
 const ok = (usd: number, eur: number): HistoryResult => ({ status: 'ok', usd, eur });
 
 describe('backfillPrices', () => {
+  it('re-prices USD-only defillama rows (eur_price NULL) via CoinGecko in a second pass', async () => {
+    const { db } = createTestDb();
+    // A prior run fell back to DefiLlama: USD present, EUR permanently missing
+    // unless someone re-prices it. No events needed — the pass scans prices.
+    upsertPrices(db, [
+      { asset: 'ETH', date: '2025-07-05', usdPrice: 2000, eurPrice: null, source: 'defillama' },
+    ]);
+    const { deps, cgCalls } = fakeClients(() => ok(2001, 1801));
+
+    const summary = await backfillPrices(db, { maxCalls: 10 }, deps);
+
+    expect(cgCalls).toEqual([{ cgId: 'ethereum', date: '2025-07-05' }]);
+    expect(getPrice(db, 'ETH', '2025-07-05')).toMatchObject({
+      usdPrice: 2001,
+      eurPrice: 1801,
+      source: 'coingecko',
+    });
+    expect(summary.eurRepriced).toBe(1);
+  });
+
+  it('leaves USD-only rows untouched when CoinGecko still cannot serve them', async () => {
+    const { db } = createTestDb();
+    upsertPrices(db, [
+      { asset: 'ETH', date: '2025-07-05', usdPrice: 2000, eurPrice: null, source: 'defillama' },
+    ]);
+    const { deps } = fakeClients(() => ({ status: 'unavailable', reason: 'out_of_range' }));
+
+    const summary = await backfillPrices(db, { maxCalls: 10 }, deps);
+
+    expect(getPrice(db, 'ETH', '2025-07-05')).toMatchObject({
+      usdPrice: 2000,
+      eurPrice: null,
+      source: 'defillama',
+    });
+    expect(summary.eurRepriced).toBe(0);
+    expect(summary.failures).toHaveLength(1);
+  });
+
   it('writes coingecko rows (both currencies, source=coingecko) for needed pairs', async () => {
     const { db } = createTestDb();
     insertEvent(db, { txHash: '0x1', timestamp: T0, sentAsset: 'ETH', receivedAsset: 'USDC' });

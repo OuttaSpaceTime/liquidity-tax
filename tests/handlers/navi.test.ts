@@ -36,6 +36,8 @@ interface SuiFixture {
   walletsContext: string[];
   blockNumber: number;
   raw: { timestampMs?: string | null } & Record<string, unknown>;
+  /** Expected decode outcome; defaults to 'decoded' (see navi-04 relabel note). */
+  expectedStatus?: 'decoded' | 'unclassified';
   expectedEvents: FixtureEvent[];
 }
 
@@ -136,9 +138,9 @@ describe('navi handler [1C.4]', () => {
 
   for (const file of NAVI_FIXTURES) {
     const fixture = loadFixture(file);
-    it(`${file} (${fixture.scenario}${fixture.foreign ? ', foreign' : ''}): decodes to the hand-labeled TaxEvent[]`, () => {
+    it(`${file} (${fixture.scenario}${fixture.foreign ? ', foreign' : ''}): decodes to the hand-labeled outcome`, () => {
       const result = makeRegistry(fixture.walletsContext).decode(toRawTx(fixture));
-      expect(result.status).toBe('decoded');
+      expect(result.status).toBe(fixture.expectedStatus ?? 'decoded');
       if (result.status !== 'decoded') return;
 
       expect(result.events.map(comparable)).toEqual(fixture.expectedEvents.map(expectedComparable));
@@ -170,5 +172,71 @@ describe('navi handler [1C.4]', () => {
     expect(liquidationEvent).toBeDefined();
     const result = makeRegistry([liquidationEvent!.parsedJson.sender]).decode(raw);
     expect(result.status).toBe('unclassified');
+  });
+});
+
+describe('navi — owned PTB guards (review regressions)', () => {
+  it('routes an owned PTB with an unrecognized foreign-protocol swap leg to the manual queue', () => {
+    // navi-04 contains a Cetus pool::SwapEvent (idx 15) disposing the
+    // withdrawn vSUI — no handler decodes it, so a kind:'ok' here would
+    // silently understate taxable activity (§7: standalone LST swaps ARE
+    // disposals). Pinned via the fixture's expectedStatus too; this test
+    // documents the reason text.
+    const fixture = loadFixture('navi-04-hasui-collateral-migration.json');
+    const result = makeRegistry(fixture.walletsContext).decode(toRawTx(fixture));
+    expect(result.status).toBe('unclassified');
+    if (result.status === 'unclassified') {
+      expect(result.reason).toContain('swap');
+    }
+  });
+
+  it('rejects pool-leg pairing whose coin type contradicts the reserve registry (same-amount collision)', () => {
+    // Two same-raw-amount pool legs of DIFFERENT coins: nearest-preceding
+    // pairing would hand the USDT leg to the USDC (reserve 10) deposit. The
+    // registry knows reserve 10 = USDC, so the contradiction must surface as
+    // unclassified instead of a silent asset mislabel. Synthetic shape-only
+    // raw (payload shapes mirror navi-04's real PoolDeposit/DepositEvent).
+    const sender = `0x${'b'.repeat(64)}`;
+    const lending = '0xd899cf7d2b5db716bd2cf55599fb0d5ee38a3061e7b6bb6eebf73fa5bc4c81ca';
+    const raw: RawTx = {
+      chain: 'sui',
+      txHash: 'SyntheticPairingDigest',
+      blockNumber: 1,
+      blockTimestamp: 1_700_000_000,
+      fetchedAt: 0,
+      rawJson: {
+        transaction: { data: { sender } },
+        events: [
+          {
+            type: `${lending}::pool::PoolDeposit`,
+            parsedJson: {
+              sender,
+              amount: '1000000',
+              pool: 'dba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC',
+            },
+          },
+          {
+            type: `${lending}::pool::PoolDeposit`,
+            parsedJson: {
+              sender,
+              amount: '1000000',
+              pool: 'c060006111016b8a020ad5b33834984a437aaa7d3c74c18e09a95d48aceab08c::coin::COIN',
+            },
+          },
+          {
+            // reserve 10 = USDC, but the NEAREST preceding same-amount leg is
+            // the USDT (wormhole ::coin::COIN) one at index 1.
+            type: `${lending}::lending::DepositEvent`,
+            parsedJson: { reserve: 10, sender, amount: '1000000' },
+          },
+        ],
+      },
+    } as RawTx;
+
+    const result = makeRegistry([sender]).decode(raw);
+    expect(result.status).toBe('unclassified');
+    if (result.status === 'unclassified') {
+      expect(result.reason).toContain('reserve');
+    }
   });
 });

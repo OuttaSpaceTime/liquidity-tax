@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { flattenParsedTransaction } from '../../src/chains/solana/whirlpool-scan';
 import { DecoderRegistry } from '../../src/decoder';
 import type { RawTx } from '../../src/decoder/types';
 import { orcaWhirlpoolHandler } from '../../src/handlers/orca-whirlpool';
@@ -131,6 +132,103 @@ describe('orca whirlpool handler [1B.3]', () => {
     // Registry configured with an unrelated wallet (not among the tx's account keys) — tx is not ours.
     const result = makeRegistry(['Unre1atedWa11etPubkey111111111111111111111']).decode(raw);
     expect(result.status).toBe('skipped');
+  });
+});
+
+describe('orca whirlpool — CPI nesting, failed txs, multi-hop residual (review regressions)', () => {
+  interface MutableInnerIx {
+    stackHeight?: number | null;
+    programId?: string;
+    parsed?: { type?: string; info?: { amount?: string; tokenAmount?: { amount?: string } } };
+    [key: string]: unknown;
+  }
+  interface MutableRawJson {
+    transaction: { message: { instructions: MutableInnerIx[] } };
+    meta: {
+      err: unknown;
+      innerInstructions: Array<{ index: number; instructions: MutableInnerIx[] }>;
+    };
+  }
+
+  it('propagates jsonParsed stackHeight into FlatInstruction.depth (real fixture carries stackHeight 3)', () => {
+    // wYcczFGa…/yXtA5G68… contain stackHeight-3 inner instructions (token-account
+    // creation under the openPositionWithTokenExtensions ATA-create) — they must
+    // flatten to depth 2, not be collapsed onto depth 1.
+    const raw = loadRawTx('yXtA5G68ZcUhbEsXxjjTgGDBbrMsSXRdxT6xrakH5fLmK2T64PP6GHisBymGmzBPukiXrUufYnHs9kLmUnZtmP5');
+    const flat = flattenParsedTransaction(raw.rawJson);
+    expect(flat.some((ix) => ix.depth === 2)).toBe(true);
+  });
+
+  it('decodes a Whirlpool harvest invoked via CPI (router-wrapped, stackHeight 2/3)', () => {
+    // Synthetic nesting of the REAL fixture qvMYfEc4… (harvest: collectFees +
+    // collectReward): the whole original instruction list becomes the inner
+    // instructions of a fake aggregator router — the shape of a Jupiter-routed
+    // or auto-compounder Whirlpool call. Every flat index shifts by +1.
+    const fixture = golden.fixtures.find((f) => f.txHash.startsWith('qvMYfEc4'))!;
+    const raw = loadRawTx(fixture.txHash);
+    const rawJson = raw.rawJson as unknown as MutableRawJson;
+    const innerByIndex = new Map(
+      rawJson.meta.innerInstructions.map((entry) => [entry.index, entry.instructions]),
+    );
+    const nested: MutableInnerIx[] = [];
+    rawJson.transaction.message.instructions.forEach((ix, index) => {
+      nested.push({ ...ix, stackHeight: 2 });
+      for (const child of innerByIndex.get(index) ?? []) {
+        nested.push({ ...child, stackHeight: (child.stackHeight ?? 2) + 1 });
+      }
+    });
+    rawJson.transaction.message.instructions = [
+      { programId: 'RouterFake1111111111111111111111111111111111', accounts: [], data: '' },
+    ];
+    rawJson.meta.innerInstructions = [{ index: 0, instructions: nested }];
+
+    const result = makeRegistry([fixture.wallet]).decode(raw);
+    expect(result.status).toBe('decoded');
+    if (result.status !== 'decoded') return;
+    const expected = fixture.expectedEvents.map(expectedComparable).map((e) => ({
+      ...e,
+      logIndex: e.logIndex + 1,
+    }));
+    expect(result.events.map(comparable)).toEqual(expected);
+  });
+
+  it('emits NO protocol events for a failed (meta.err) Whirlpool tx', () => {
+    // A slippage-failed open/close still lists the outer instructions but has
+    // no inner instructions — lifecycle events must not fire.
+    const fixture = golden.fixtures.find((f) => f.txHash.startsWith('yXtA5G68'))!;
+    const raw = loadRawTx(fixture.txHash);
+    const rawJson = raw.rawJson as unknown as MutableRawJson;
+    rawJson.meta.err = { InstructionError: [2, { Custom: 6022 }] };
+    rawJson.meta.innerInstructions = [];
+
+    const result = makeRegistry([fixture.wallet]).decode(raw);
+    expect(result.status).toBe('skipped');
+  });
+
+  it('routes a TwoHopSwap with an unequal intermediate to the manual queue instead of dropping the residual', () => {
+    const fixture = golden.fixtures.find((f) => f.txHash.startsWith('r62RgUWJ'))!;
+    const raw = loadRawTx(fixture.txHash);
+    const rawJson = raw.rawJson as unknown as MutableRawJson;
+    let bumped = 0;
+    for (const entry of rawJson.meta.innerInstructions) {
+      for (const ix of entry.instructions) {
+        const info = ix.parsed?.info;
+        if (info?.amount === '265484693' && bumped === 0) {
+          info.amount = '265484694';
+          bumped += 1;
+        } else if (info?.tokenAmount?.amount === '265484693' && bumped === 0) {
+          info.tokenAmount.amount = '265484694';
+          bumped += 1;
+        }
+      }
+    }
+    expect(bumped).toBe(1);
+
+    const result = makeRegistry([fixture.wallet]).decode(raw);
+    expect(result.status).toBe('unclassified');
+    if (result.status === 'unclassified') {
+      expect(result.reason).toContain('nets to');
+    }
   });
 });
 

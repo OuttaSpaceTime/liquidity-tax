@@ -1,8 +1,10 @@
 import { describe, it, expect } from 'bun:test';
 import { createHash } from 'node:crypto';
 import { createTestDb, type TestDb } from '../helpers/db';
-import { unclassified } from '../../db/schema';
+import { transferLinks, unclassified } from '../../db/schema';
 import { DecoderRegistry } from '../../src/decoder/registry';
+import { runLinker } from '../../src/linker/run';
+import { listLinksForAssetWallet } from '../../src/linker/repo';
 import { makeRawTx, makeEvent, makeHandler, insertRawTx } from './helpers';
 
 /**
@@ -196,6 +198,148 @@ describe('DecoderRegistry.decodeAndPersist — idempotency', () => {
       .query<{ handler_id: string }, [string]>('SELECT handler_id FROM events WHERE tx_hash = ?')
       .all('GasDigest2');
     expect(rows).toEqual([{ handler_id: 'sui_ingest_gas' }]);
+  });
+
+  it('preserves surrogate event ids on re-decode (natural-key upsert, not delete+insert)', () => {
+    const { db, sqlite } = createTestDb();
+    insertRawTx(db, makeRawTx({ txHash: '0xstableid' }));
+
+    const registry = new DecoderRegistry(db);
+    registry.registerHandler(
+      makeHandler({
+        id: 'h1',
+        result: {
+          kind: 'ok',
+          events: [
+            makeEvent({ handlerId: 'h1', txHash: '0xstableid', logIndex: 0 }),
+            makeEvent({ handlerId: 'h1', txHash: '0xstableid', logIndex: 1 }),
+          ],
+        },
+      }),
+    );
+
+    registry.decodeAndPersist('base', '0xstableid');
+    const idsBefore = sqlite
+      .query<{ id: number }, [string]>('SELECT id FROM events WHERE tx_hash = ? ORDER BY id')
+      .all('0xstableid')
+      .map((r) => r.id);
+    expect(idsBefore).toHaveLength(2);
+
+    registry.decodeAndPersist('base', '0xstableid');
+    const idsAfter = sqlite
+      .query<{ id: number }, [string]>('SELECT id FROM events WHERE tx_hash = ? ORDER BY id')
+      .all('0xstableid')
+      .map((r) => r.id);
+    expect(idsAfter).toEqual(idsBefore);
+  });
+
+  it('keeps transfer_links and linker tags intact across a re-decode', () => {
+    const { db } = createTestDb();
+    insertRawTx(db, makeRawTx({ txHash: '0xout' }));
+    insertRawTx(db, makeRawTx({ txHash: '0xin' }));
+
+    const registry = new DecoderRegistry(db);
+    registry.registerHandler(
+      makeHandler({
+        id: 'h1',
+        decode: (raw) => ({
+          kind: 'ok',
+          events: [
+            raw.txHash === '0xout'
+              ? makeEvent({
+                  handlerId: 'h1',
+                  txHash: '0xout',
+                  type: 'transfer',
+                  subtype: 'send',
+                  wallet: '0xwallet-a',
+                  sentAsset: 'WETH',
+                  sentAmount: 1000n,
+                })
+              : makeEvent({
+                  handlerId: 'h1',
+                  txHash: '0xin',
+                  type: 'transfer',
+                  subtype: 'receive',
+                  wallet: '0xwallet-b',
+                  receivedAsset: 'WETH',
+                  receivedAmount: 1000n,
+                }),
+          ],
+        }),
+      }),
+    );
+
+    registry.decodeAndPersist('base', '0xout');
+    registry.decodeAndPersist('base', '0xin');
+    const summary = runLinker(db);
+    expect(summary.written).toBe(1);
+    expect(listLinksForAssetWallet(db, { asset: 'WETH', wallet: '0xwallet-a' })).toHaveLength(1);
+
+    // Re-decode both txs (e.g. handler version bump): links must still join,
+    // the linker must not re-match into duplicates, and the linker's
+    // self_transfer retag + flag must survive.
+    registry.decodeAndPersist('base', '0xout');
+    registry.decodeAndPersist('base', '0xin');
+
+    const links = listLinksForAssetWallet(db, { asset: 'WETH', wallet: '0xwallet-a' });
+    expect(links).toHaveLength(1);
+    expect(links[0].outEvent.subtype).toBe('self_transfer');
+    expect(links[0].outEvent.flagsJson ?? []).toContain('self_transfer');
+    expect(links[0].inEvent.subtype).toBe('self_transfer');
+
+    const rerun = runLinker(db);
+    expect(rerun.written).toBe(0);
+    expect(db.select().from(transferLinks).all()).toHaveLength(1);
+  });
+
+  it('drops transfer_links whose events disappear on re-decode', () => {
+    const { db } = createTestDb();
+    insertRawTx(db, makeRawTx({ txHash: '0xout2' }));
+    insertRawTx(db, makeRawTx({ txHash: '0xin2' }));
+
+    const transferEvent = (txHash: string) =>
+      txHash === '0xout2'
+        ? makeEvent({
+            handlerId: 'h1',
+            txHash,
+            type: 'transfer',
+            subtype: 'send',
+            wallet: '0xwallet-a',
+            sentAsset: 'WETH',
+            sentAmount: 1000n,
+          })
+        : makeEvent({
+            handlerId: 'h1',
+            txHash,
+            type: 'transfer',
+            subtype: 'receive',
+            wallet: '0xwallet-b',
+            receivedAsset: 'WETH',
+            receivedAmount: 1000n,
+          });
+
+    const v1 = new DecoderRegistry(db);
+    v1.registerHandler(
+      makeHandler({ id: 'h1', decode: (raw) => ({ kind: 'ok', events: [transferEvent(raw.txHash)] }) }),
+    );
+    v1.decodeAndPersist('base', '0xout2');
+    v1.decodeAndPersist('base', '0xin2');
+    expect(runLinker(db).written).toBe(1);
+
+    // v2 stops emitting anything for the out-tx — the link must not dangle.
+    const v2 = new DecoderRegistry(db);
+    v2.registerHandler(
+      makeHandler({
+        id: 'h1',
+        decode: (raw) =>
+          raw.txHash === '0xout2'
+            ? { kind: 'skip' }
+            : { kind: 'ok', events: [transferEvent(raw.txHash)] },
+      }),
+    );
+    v2.decodeAndPersist('base', '0xout2');
+
+    expect(db.select().from(transferLinks).all()).toHaveLength(0);
   });
 
   it('does not touch events of other txs', () => {

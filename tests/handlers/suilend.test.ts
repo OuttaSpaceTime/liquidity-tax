@@ -147,3 +147,87 @@ describe('suilend handler [1C.5]', () => {
     expect(suilendHandler.matches(toRawTx(loadFixture(turbos!)))).toBe(false);
   });
 });
+
+describe('suilend — aggregator mirror dedup (review regression)', () => {
+  it('emits ONE swap:trade when a 7K route carries both router::SwapEvent and the settle::Swap mirror', () => {
+    // One zap route can emit BOTH summaries; emitting both would double-count
+    // the trade. Synthetic raw (shape-only; payloads mirror cross-01/suilend-03).
+    const sender = `0x${'a'.repeat(64)}`;
+    const sui = { name: '0000000000000000000000000000000000000000000000000000000000000002::sui::SUI' };
+    const usdc = { name: 'dba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC' };
+    const raw: RawTx = {
+      chain: 'sui',
+      txHash: 'SyntheticMirrorDigest',
+      blockNumber: 1,
+      blockTimestamp: 1_700_000_000,
+      fetchedAt: 0,
+      rawJson: {
+        transaction: { data: { sender } },
+        events: [
+          {
+            type: '0x33ec64e9bb369bf045ddc198c81adbf2acab424da37465d95296ee02045d2b17::router::SwapEvent',
+            parsedJson: { amount_in: '1000000', amount_out: '2000000', from: sui, target: usdc },
+          },
+          {
+            type: '0xe8f996ea6ff38c557c253d3b93cfe2ebf393816487266786371aa4532a9229f2::settle::Swap',
+            parsedJson: { amount_in: '1000000', amount_out: '2000000', coin_in: sui, coin_out: usdc },
+          },
+        ],
+      },
+    } as RawTx;
+
+    const result = suilendHandler.decode(raw, {
+      wallets: new Set([sender]),
+      decodedEvents: [],
+      claimedLogIndexes: new Set<number>(),
+    });
+
+    expect(result.kind).toBe('ok');
+    if (result.kind !== 'ok') return;
+    expect(result.events.filter((e) => e.type === 'swap')).toHaveLength(1);
+  });
+});
+
+describe('suilend — ctoken conversion without a rate snapshot (review regression)', () => {
+  it('routes a standalone ctoken Withdraw with no same-tx ReserveAssetDataEvent to the manual queue', () => {
+    // toUnderlying would otherwise silently assume 1:1 — the exchange rate
+    // only grows over time, so the underlying would be understated with no
+    // problem raised. Synthetic shape-only raw (payload mirrors suilend-02).
+    const sender = `0x${'c'.repeat(64)}`;
+    const raw: RawTx = {
+      chain: 'sui',
+      txHash: 'SyntheticNoRateDigest',
+      blockNumber: 1,
+      blockTimestamp: 1_700_000_000,
+      fetchedAt: 0,
+      rawJson: {
+        transaction: { data: { sender } },
+        events: [
+          {
+            type: '0xf95b06141ed4a174f239417323bde3f209b972f5930d8521ea38a52aff3a6ddf::lending_market::WithdrawEvent',
+            parsedJson: {
+              lending_market_id: '0x1',
+              coin_type: {
+                name: '0000000000000000000000000000000000000000000000000000000000000002::sui::SUI',
+              },
+              reserve_id: '0x2',
+              obligation_id: '0x3',
+              ctoken_amount: '969991680',
+            },
+          },
+        ],
+      },
+    } as RawTx;
+
+    const result = suilendHandler.decode(raw, {
+      wallets: new Set([sender]),
+      decodedEvents: [],
+      claimedLogIndexes: new Set<number>(),
+    });
+
+    expect(result.kind).toBe('unclassified');
+    if (result.kind === 'unclassified') {
+      expect(result.reason).toContain('exchange rate');
+    }
+  });
+});

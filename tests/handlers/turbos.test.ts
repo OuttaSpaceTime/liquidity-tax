@@ -98,6 +98,9 @@ describe('turbos handler [1C.3]', () => {
         const actual = events[i]!;
         const { sentAmount, receivedAmount, ...fields } = expected;
         expect(actual).toMatchObject(fields as Record<string, unknown>);
+        // Strict flags: hand-labels omitting `flags` mean NO flags — spurious
+        // handler flags directly drive tax treatment and must fail here.
+        expect(actual.flags ?? []).toEqual(fields.flags ?? []);
         expect(actual.sentAmount).toBe(
           sentAmount === undefined ? undefined : BigInt(sentAmount),
         );
@@ -120,12 +123,52 @@ describe('turbos handler [1C.3]', () => {
   });
 });
 
+describe('turbos — aggregator-summary dedup across handlers (review regression)', () => {
+  it('defers when an earlier handler already claimed the SAME trade at a DIFFERENT mirror index', () => {
+    // turbos-02 carries two mirroring route summaries (universal_router::Swap
+    // @23 and settle::Swap @24). If an earlier handler (navi/suilend) claimed
+    // the settle mirror, turbos preferring the universal_router index must NOT
+    // emit the same trade again — one route, one swap:trade.
+    const { fixture } = fixtures.find((f) => f.file.startsWith('turbos-02'))!;
+    const raw = toRawTx(fixture);
+    const sender = fixture.walletsContext[0]!;
+    const claimedBySuilend: TaxEvent = {
+      type: 'swap',
+      subtype: 'trade',
+      chain: 'sui',
+      txHash: fixture.txHash,
+      logIndex: 24, // the settle::Swap mirror — different index than turbos' pick (23)
+      emissionSeq: 0,
+      timestamp: raw.blockTimestamp,
+      wallet: sender,
+      sentAsset: 'SUI',
+      sentAmount: 3306294403861n,
+      receivedAsset: 'USDC',
+      receivedAmount: 4787913671n,
+      handlerId: 'suilend',
+      handlerVersion: 1,
+    };
+
+    const result = turbosHandler.decode(raw, {
+      wallets: new Set([sender]),
+      decodedEvents: [claimedBySuilend],
+      claimedLogIndexes: new Set<number>(),
+    });
+
+    expect(result.kind).toBe('ok');
+    if (result.kind !== 'ok') return;
+    expect(result.events.filter((e) => e.type === 'swap')).toHaveLength(0);
+    // the open_position legs still decode
+    expect(result.events.filter((e) => e.type === 'lp_deposit')).toHaveLength(2);
+  });
+});
+
 describe('turbos position tracker integration', () => {
   it('reduces turbos-01 (rebalance close leg) to a closed snapshot with fees and rewards', () => {
     const closeFixture = fixtures.find((f) => f.fixture.scenario === 'turbos_rebalance')!.fixture;
     const events = decodeFixture(closeFixture);
     const positionId =
-      'sui:turbos:0xd19d5f1df8bc9eff2af830fd25eb0195ccf50402039c870e46b01cdcebcb3076';
+      'sui:turbos:0x942ff2f06024309391de1b38d777d8f10d1f92265bb63fbd66cb5306aca2d964';
     const groups = groupEventsByPosition(events);
     const snapshot = reducePositionEvents(positionId, groups.get(positionId) ?? []);
 
@@ -145,7 +188,7 @@ describe('turbos position tracker integration', () => {
     const openFixture = fixtures.find((f) => f.fixture.scenario === 'turbos_open_zap')!.fixture;
     const events = decodeFixture(openFixture);
     const positionId =
-      'sui:turbos:0x9989f148111bb31476086a41c182002875d691b2931444313092c990d6584fdb';
+      'sui:turbos:0xc7202c7bc74d997c6173dc1e884e04d02393076224cbceb75008a6e9a1fcfb12';
     const snapshot = reducePositionEvents(
       positionId,
       groupEventsByPosition(events).get(positionId) ?? [],

@@ -3,7 +3,7 @@ import type { CoinGeckoClient } from './coingecko';
 import { CoinGeckoRateLimitError } from './coingecko';
 import type { DefiLlamaClient } from './defillama';
 import { utcDateOf } from './dates';
-import { buildFetchPlan, collectNeededPairs } from './manifest';
+import { buildFetchPlan, collectEurMissingPairs, collectNeededPairs } from './manifest';
 import { upsertPrices, type PriceInsert } from './repo';
 
 export interface BackfillDeps {
@@ -26,6 +26,8 @@ export interface BackfillSummary {
   unmappedAssets: string[];
   /** Pairs whose close (00:00 UTC of date+1) has not happened yet. */
   skippedFutureClose: number;
+  /** USD-only rows (eur_price NULL) re-priced via CoinGecko in the second pass. */
+  eurRepriced: number;
   failures: Array<{ cgId: string; date: string; reason: string }>;
   stopped: 'completed' | 'max_calls' | 'rate_limited';
 }
@@ -60,6 +62,7 @@ export async function backfillPrices(
     defillamaCalls: 0,
     unmappedAssets: plan.unmappedAssets,
     skippedFutureClose: needed.length - fetchable.length,
+    eurRepriced: 0,
     failures: [],
     stopped: 'completed',
   };
@@ -124,6 +127,56 @@ export async function backfillPrices(
     upsertPrices(db, rows);
     summary.written += rows.length;
     log(`price ${task.cgId} ${task.date} → ${task.assets.join(', ')} (${rows[0].source})`);
+  }
+
+  // Second pass — EUR re-pricing: rows the DefiLlama fallback left USD-only
+  // (eur_price NULL) would otherwise NEVER get an EUR close (collectNeededPairs
+  // treats any existing row as satisfied). Retry CoinGecko for them; a hit
+  // overwrites the whole row (both closes, source 'coingecko').
+  const eurMissing = collectEurMissingPairs(db).filter((p) => p.date < todayUtc);
+  const eurPlan = buildFetchPlan(eurMissing);
+  for (const task of eurPlan.tasks) {
+    if (summary.stopped !== 'completed') break;
+    if (callsLeft() <= 0) {
+      summary.stopped = 'max_calls';
+      break;
+    }
+    summary.coingeckoCalls += 1;
+    try {
+      const res = await deps.coingecko.fetchDailyClose(task.cgId, task.date);
+      if (res.status !== 'ok') {
+        summary.failures.push({
+          cgId: task.cgId,
+          date: task.date,
+          reason: `eur_reprice coingecko:${res.reason}`,
+        });
+        log(`eur-miss ${task.cgId} ${task.date} (${res.reason}) — stays USD-only`);
+        continue;
+      }
+      upsertPrices(
+        db,
+        task.assets.map((asset) => ({
+          asset,
+          date: task.date,
+          usdPrice: res.usd,
+          eurPrice: res.eur,
+          source: 'coingecko',
+        })),
+      );
+      summary.eurRepriced += task.assets.length;
+      log(`eur   ${task.cgId} ${task.date} → ${task.assets.join(', ')} (repriced)`);
+    } catch (err) {
+      if (err instanceof CoinGeckoRateLimitError) {
+        log(`rate-limited — stopping (${task.cgId} ${task.date})`);
+        summary.stopped = 'rate_limited';
+        break;
+      }
+      summary.failures.push({
+        cgId: task.cgId,
+        date: task.date,
+        reason: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   return summary;

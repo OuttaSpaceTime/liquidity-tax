@@ -97,6 +97,8 @@ interface TokenBalanceEntry {
 interface RawJsonShape {
   transaction?: { message?: { accountKeys?: readonly ParsedAccountKey[] } };
   meta?: {
+    /** null on success; an error object on failed (reverted) txs. */
+    err?: unknown;
     preTokenBalances?: readonly TokenBalanceEntry[];
     postTokenBalances?: readonly TokenBalanceEntry[];
   } | null;
@@ -144,13 +146,18 @@ function buildMintByAccount(raw: unknown): Map<string, string> {
 }
 
 /**
- * CPI children of a flattened instruction: the following instructions with
- * greater depth, up to the next instruction at the same or shallower depth.
+ * DIRECT CPI children of a flattened instruction: the following instructions
+ * exactly one level deeper, up to the next instruction at the same or
+ * shallower depth. Grandchildren (e.g. a token-2022 transfer-hook's internal
+ * SPL transfer at depth+2) are excluded — counting them would add phantom
+ * principal/fee legs. Works at any nesting level, so a Whirlpool instruction
+ * invoked via CPI (router/auto-compounder at depth ≥ 1) still finds its
+ * transfer legs at depth+1.
  */
 function cpiChildren(flat: readonly FlatInstruction[], ix: WhirlpoolIxRef): FlatInstruction[] {
   const children: FlatInstruction[] = [];
   for (let i = ix.flatIndex + 1; i < flat.length && flat[i].depth > ix.depth; i++) {
-    children.push(flat[i]);
+    if (flat[i].depth === ix.depth + 1) children.push(flat[i]);
   }
   return children;
 }
@@ -205,11 +212,23 @@ function netSwapLegs(
     }
     // Legs touching no vault (e.g. token-2022 transfer-fee skims) are ignored.
   }
-  // A mint on both sides is the multi-hop intermediate — net to nothing.
+  // A mint on both sides is the multi-hop intermediate — net BY AMOUNT
+  // (subtract the smaller side, keep the remainder): an unequal intermediate
+  // (e.g. token-2022 transfer-fee mints) leaves a residual that must surface
+  // as a 2-mint side below → manual queue, never silently dropped value.
   for (const mint of [...sent.keys()]) {
-    if (received.has(mint)) {
+    const sentAmount = sent.get(mint)!;
+    const receivedAmount = received.get(mint);
+    if (receivedAmount === undefined) continue;
+    if (sentAmount === receivedAmount) {
       sent.delete(mint);
       received.delete(mint);
+    } else if (sentAmount > receivedAmount) {
+      sent.set(mint, sentAmount - receivedAmount);
+      received.delete(mint);
+    } else {
+      received.set(mint, receivedAmount - sentAmount);
+      sent.delete(mint);
     }
   }
   if (sent.size !== 1 || received.size !== 1) {
@@ -230,6 +249,12 @@ export const orcaWhirlpoolHandler: Handler = {
   },
 
   decode(raw: RawTx, ctx: DecodeContext): DecodeResult {
+    // Failed (reverted) txs keep their outer message instructions, so e.g. a
+    // slippage-failed ClosePosition would otherwise still emit its lifecycle
+    // event. Nothing executed — no protocol events. (The gas:fee event is
+    // ingest-owned and correct either way: the fee IS paid on failure.)
+    if (((raw.rawJson as RawJsonShape).meta?.err ?? null) !== null) return { kind: 'skip' };
+
     const refs = findWhirlpoolInstructions(raw.rawJson);
     if (refs.length === 0) return { kind: 'skip' };
 

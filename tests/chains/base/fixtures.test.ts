@@ -95,6 +95,9 @@ describe('base golden fixtures (hand-labeled real txs — RED until 1A handlers 
         const actual = result.events[i]!;
         const { sentAmount, receivedAmount, ...fields } = expected;
         expect(actual).toMatchObject(fields as Record<string, unknown>);
+        // Strict flags: hand-labels omitting `flags` mean NO flags — spurious
+        // handler flags directly drive tax treatment and must fail here.
+        expect(actual.flags ?? []).toEqual(fields.flags ?? []);
         if (sentAmount !== undefined) expect(actual.sentAmount).toBe(BigInt(sentAmount));
         if (receivedAmount !== undefined) {
           expect(actual.receivedAmount).toBe(BigInt(receivedAmount));

@@ -3,7 +3,7 @@
   "protocol": "aerodrome",
   "txHash": "0x974101ee515b86da7eeae7d5c7dcfb02954aedb83b3bd21e92a9e7dbf9241a27",
   "foreign": false,
-  "notes": "vfat Sickle-proxied zap into Aerodrome Slipstream WETH/USDC CL position 29372936: EOA sends 19878200369744237 wei ETH to the vfat automation contract; the Sickle wraps 19860309989411468 to WETH (log 158; the 17890380332769 wei delta is a vfat fee taken in raw ETH with no log — documented gap, no event), swaps 11059818255311813 WETH -> 45165024 USDC (pool swap log 164), then adds 8792230596900611 WETH + 45165024 USDC liquidity (NPM IncreaseLiquidity log 177, existing tokenId — no NFT mint => add_liquidity, not open). WETH dust swept Sickle->EOA (log 180) is an internal self transfer: suppressed. Conventions: one event per token leg at the protocol log index, emissionSeq 0/1; Sickle == EOA economically.",
+  "notes": "vfat Sickle-proxied zap into Aerodrome Slipstream WETH/USDC CL position 29372936: EOA sends 19878200369744237 wei ETH to the vfat automation contract; the Sickle wraps 19860309989411468 to WETH (log 158; the 17890380332769 wei delta is a vfat fee taken in raw ETH with no log \u2014 recovered offline as tx.value minus the wrapped amount and emitted as transfer:send flagged vfat_fee at the wrap log, emissionSeq 1), swaps 11059818255311813 WETH -> 45165024 USDC (pool swap log 164), then adds 8792230596900611 WETH + 45165024 USDC liquidity (NPM IncreaseLiquidity log 177, existing tokenId \u2014 no NFT mint => add_liquidity, not open). WETH dust swept Sickle->EOA (log 180) is an internal self transfer: suppressed. Conventions: one event per token leg at the protocol log index, emissionSeq 0/1; Sickle == EOA economically.",
   "walletsContext": [
     "0x76ab852d7e6c7d91180f5682ed8d009c218d4d6a"
   ],
@@ -475,6 +475,22 @@
       "sentAmount": "19860309989411468",
       "receivedAsset": "WETH",
       "receivedAmount": "19860309989411468",
+      "timestamp": 1760942073
+    },
+    {
+      "type": "transfer",
+      "subtype": "send",
+      "chain": "base",
+      "txHash": "0x974101ee515b86da7eeae7d5c7dcfb02954aedb83b3bd21e92a9e7dbf9241a27",
+      "logIndex": 158,
+      "emissionSeq": 1,
+      "wallet": "0x76ab852d7e6c7d91180f5682ed8d009c218d4d6a",
+      "handlerId": "aerodrome",
+      "sentAsset": "ETH",
+      "sentAmount": "17890380332769",
+      "flags": [
+        "vfat_fee"
+      ],
       "timestamp": 1760942073
     },
     {

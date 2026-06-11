@@ -79,7 +79,12 @@ export async function importEurCache(
         summary.skippedEmpty += 1;
         continue;
       }
-      const missing = assets.filter((asset) => getPrice(db, asset, date) === undefined);
+      // USD-only rows (eur_price NULL, e.g. the DefiLlama backfill fallback)
+      // count as missing: the cache's whole point is supplying the EUR close.
+      const missing = assets.filter((asset) => {
+        const row = getPrice(db, asset, date);
+        return row === undefined || row.eurPrice === null;
+      });
       if (missing.length === 0) {
         summary.skippedExisting += 1;
         continue;

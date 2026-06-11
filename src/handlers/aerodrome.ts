@@ -2,12 +2,7 @@ import type { BaseRawJson } from '../chains/base/ingest';
 import type { DecodeContext, DecodeResult, RawTx } from '../decoder/types';
 import type { Chain, Protocol, TaxEvent } from '../types/event';
 import {
-  COLLECT_TOPIC,
-  INCREASE_LIQUIDITY_TOPIC,
-  TRANSFER_TOPIC,
   UniV3LikeHandler,
-  ZERO_TOPIC,
-  legAmounts,
   topicAddress,
   type Erc20Transfer,
   type ParsedLog,
@@ -33,14 +28,20 @@ import {
  *    event topics themselves (rotki uses an on-chain cache; we are offline).
  *
  *  - **vfat Sickle proxy custody**: position NFTs are held by a per-user
- *    Sickle contract; deposits/withdraws/harvests flow through it. The Sickle
- *    is detected per-tx from the NPM counterparties (Collect recipient, NFT
- *    mint/burn endpoint, IncreaseLiquidity payer) and the ClaimRewards
- *    claimer; every event is attributed to the owner EOA (`resolveWallet`).
- *    Sickle↔owner transfers (dust sweeps, net forwards) are suppressed as
- *    internal. Sickle→third-party transfers (vfat performance/ops fee skims)
- *    become `transfer:send`; income legs stay gross, matching the 2025 filed
- *    report convention (fixture 03 notes).
+ *    Sickle contract; deposits/withdraws/harvests flow through it. Sickles
+ *    are taken from the ingest's verified discovery (`raw_json.addresses`
+ *    carries the eth_getCode-probed enumeration targets — wallets + Sickles;
+ *    see `src/chains/base/ingest.ts` discoverSickles), never inferred from
+ *    arbitrary NPM counterparties: a third party's proxy must not become
+ *    "our Sickle". Owner/proxy actors are attributed to the owner EOA
+ *    (`resolveWallet`); when no configured wallet can be resolved from the
+ *    tx sender or the receipt's transfers (keeper-triggered automation whose
+ *    rewards stay in the Sickle) the tx goes to the manual queue — never to
+ *    `tx.from` (the keeper). Sickle↔owner transfers (dust sweeps, net
+ *    forwards) are suppressed as internal. Sickle→third-party transfers
+ *    (vfat performance/ops fee skims) become `transfer:send` flagged
+ *    `vfat_fee`; income legs stay gross, matching the 2025 filed report
+ *    convention (fixture 03 notes).
  *
  *  - **Zaps**: WETH `Deposit`/`Withdrawal` for the Sickle/owner →
  *    `transfer:wrap`/`transfer:unwrap`; CL pool `Swap` logs → `swap:trade`,
@@ -145,13 +146,23 @@ export class AerodromeHandler extends UniV3LikeHandler {
     const txFrom = rawJson.tx.from.toLowerCase();
     const gauges = addressesEmitting(logs, GAUGE_TOPICS);
     const pools = addressesEmitting(logs, POOL_TOPICS);
-    const roles: TxRoles = {
-      owner: resolveOwner(owners, txFrom, transfers),
-      owners,
-      proxies: this.detectProxies(logs, transfers, owners, gauges, pools),
-      gauges,
-      pools,
-    };
+    // Verified Sickle proxies only: the ingest's enumeration targets for this
+    // tx (eth_getCode-probed Sickle discovery) minus the owner wallets. Never
+    // infer proxies from arbitrary receipt counterparties — a third party's
+    // Sickle/router must not be attributed to us.
+    const proxies = new Set(
+      (rawJson.addresses ?? []).map((a) => a.toLowerCase()).filter((a) => !owners.has(a)),
+    );
+    const owner = resolveOwner(owners, txFrom, transfers);
+    if (owner === undefined) {
+      // Keeper-triggered Sickle automation whose funds stay in the Sickle: no
+      // configured wallet appears anywhere — manual queue, never tx.from.
+      return {
+        kind: 'unclassified',
+        reason: `${this.id}: no configured owner wallet resolvable from tx sender or transfers (keeper-triggered Sickle tx?)`,
+      };
+    }
+    const roles: TxRoles = { owner, owners, proxies, gauges, pools };
 
     this.roles = roles;
     try {
@@ -161,9 +172,11 @@ export class AerodromeHandler extends UniV3LikeHandler {
       const events: TaxEvent[] = [...npmEvents];
       /** Transfer log indexes consumed by the rules below (NPM matching keeps its own set). */
       const claimed = new Set<number>();
-      events.push(...this.decodeGaugeClaims(raw, logs, transfers, claimed, roles));
+      const gaugeEvents = this.decodeGaugeClaims(raw, logs, transfers, claimed, roles);
+      if (typeof gaugeEvents === 'string') return { kind: 'unclassified', reason: gaugeEvents };
+      events.push(...gaugeEvents);
       events.push(...this.decodeSwaps(raw, logs, transfers, claimed, roles));
-      events.push(...this.decodeWraps(raw, logs, roles));
+      events.push(...this.decodeWraps(raw, rawJson, logs, roles));
       events.push(...this.decodeSickleSkims(raw, transfers, claimed, roles));
       events.push(...this.decodeAeroReceives(raw, transfers, claimed, roles));
 
@@ -182,86 +195,53 @@ export class AerodromeHandler extends UniV3LikeHandler {
     }
   }
 
-  /** Sickle == owner economically: attribute proxy/keeper actors to the owner EOA. */
+  /**
+   * Sickle == owner economically: attribute VERIFIED proxy actors to the
+   * owner EOA. Owners stay themselves; unknown third parties stay themselves
+   * too (no coercion — foreign actors must never become the owner).
+   */
   protected override resolveWallet(wallet: string): string {
     const roles = this.roles;
     if (roles === undefined) return wallet;
-    return roles.owners.has(wallet) ? wallet : roles.owner;
-  }
-
-  // ---------------------------------------------------------------------------
-  // Role discovery
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Detect vfat Sickle proxies: non-owner addresses custodying the position on
-   * the NPM (Collect recipient, NFT mint-to/burn-from, IncreaseLiquidity
-   * payer) or claiming on a gauge (ClaimRewards `from` topic).
-   */
-  private detectProxies(
-    logs: ParsedLog[],
-    transfers: Erc20Transfer[],
-    owners: Set<string>,
-    gauges: Set<string>,
-    pools: Set<string>,
-  ): Set<string> {
-    const proxies = new Set<string>();
-    const candidate = (address: string): void => {
-      if (
-        !owners.has(address) &&
-        !gauges.has(address) &&
-        !pools.has(address) &&
-        address !== this.positionManager &&
-        address !== topicAddress(ZERO_TOPIC)
-      ) {
-        proxies.add(address);
-      }
-    };
-
-    for (const log of logs) {
-      if (log.address === this.positionManager) {
-        const topic0 = log.topics[0];
-        if (topic0 === COLLECT_TOPIC) {
-          candidate(topicAddress(`0x${log.data.slice(2, 66)}`));
-        } else if (topic0 === TRANSFER_TOPIC && log.topics.length === 4) {
-          if (log.topics[1] === ZERO_TOPIC) candidate(topicAddress(log.topics[2]!));
-          else if (log.topics[2] === ZERO_TOPIC) candidate(topicAddress(log.topics[1]!));
-        } else if (topic0 === INCREASE_LIQUIDITY_TOPIC) {
-          const amounts = legAmounts(log);
-          const probe = amounts.amount0 > 0n ? amounts.amount0 : amounts.amount1;
-          if (probe > 0n) {
-            const paying = transfers.find((t) => t.value === probe);
-            if (paying !== undefined) candidate(paying.from);
-          }
-        }
-      } else if (log.topics[0] === GAUGE_CLAIM_REWARDS_TOPIC && log.topics.length >= 2) {
-        candidate(topicAddress(log.topics[1]!));
-      }
-    }
-    return proxies;
+    return roles.proxies.has(wallet) ? roles.owner : wallet;
   }
 
   // ---------------------------------------------------------------------------
   // Gauge rewards
   // ---------------------------------------------------------------------------
 
-  /** ClaimRewards → lp_reward:gauge_claim (gross; skims are separate transfer:send). */
+  /**
+   * ClaimRewards → lp_reward:gauge_claim (gross; skims are separate
+   * transfer:send), ONLY when the economic party — the ClaimRewards claimer
+   * topic or the payout transfer's recipient — is an owner or a verified
+   * proxy. Foreign claims batched into the same receipt emit nothing.
+   * A claim that IS ours but has no matching payout transfer cannot be
+   * asset-resolved offline (the ClaimRewards topic is shared by other gauge
+   * forks whose reward token is not AERO) — manual queue instead of guessing.
+   */
   private decodeGaugeClaims(
     raw: RawTx,
     logs: ParsedLog[],
     transfers: Erc20Transfer[],
     claimed: Set<number>,
     roles: TxRoles,
-  ): TaxEvent[] {
+  ): TaxEvent[] | string {
+    const isOurs = (address: string | undefined): boolean =>
+      address !== undefined && (roles.owners.has(address) || roles.proxies.has(address));
     const events: TaxEvent[] = [];
     for (const log of logs) {
       if (log.topics[0] !== GAUGE_CLAIM_REWARDS_TOPIC || log.topics.length < 2) continue;
       const amount = BigInt(log.data === '0x' ? '0x0' : log.data);
       if (amount === 0n) continue;
+      const claimer = topicAddress(log.topics[1]!);
       const payout = transfers.find(
         (t) => !claimed.has(t.logIndex) && t.from === log.address && t.value === amount,
       );
-      if (payout !== undefined) claimed.add(payout.logIndex);
+      if (!isOurs(claimer) && !isOurs(payout?.to)) continue; // someone else's claim
+      if (payout === undefined) {
+        return `${this.id}: ClaimRewards at log ${log.logIndex} has no matching payout transfer — reward asset unresolvable offline`;
+      }
+      claimed.add(payout.logIndex);
       events.push({
         type: 'lp_reward',
         subtype: 'gauge_claim',
@@ -271,8 +251,7 @@ export class AerodromeHandler extends UniV3LikeHandler {
         emissionSeq: 0,
         timestamp: raw.blockTimestamp,
         wallet: roles.owner,
-        // CL gauges only distribute AERO; fall back to it when no transfer matched.
-        receivedAsset: this.assetSymbol(payout?.token ?? AERO_TOKEN),
+        receivedAsset: this.assetSymbol(payout.token),
         receivedAmount: amount,
         handlerId: this.id,
         handlerVersion: this.version,
@@ -315,6 +294,19 @@ export class AerodromeHandler extends UniV3LikeHandler {
       // Not offline-resolvable (e.g. someone else's swap batched into the
       // receipt, or a partial-fill aggregator) — emit nothing for this log.
       if (transferIn === undefined || transferOut === undefined) continue;
+      // Ownership gate: some endpoint of the same-value routing chain must be
+      // an owner or a verified proxy — a foreign swap that merely shares the
+      // receipt is not our trade.
+      const involved = transfers.some(
+        (t) =>
+          ((t.token === transferIn.token && t.value === amountIn) ||
+            (t.token === transferOut.token && t.value === amountOut)) &&
+          (roles.owners.has(t.from) ||
+            roles.owners.has(t.to) ||
+            roles.proxies.has(t.from) ||
+            roles.proxies.has(t.to)),
+      );
+      if (!involved) continue;
       for (const t of transfers) {
         if (
           (t.token === transferIn.token && t.value === amountIn) ||
@@ -343,11 +335,24 @@ export class AerodromeHandler extends UniV3LikeHandler {
     return events;
   }
 
-  /** WETH Deposit/Withdrawal for the Sickle or the owner → transfer:wrap / unwrap. */
-  private decodeWraps(raw: RawTx, logs: ParsedLog[], roles: TxRoles): TaxEvent[] {
+  /**
+   * WETH Deposit/Withdrawal for the Sickle or the owner → transfer:wrap /
+   * unwrap. When the owner funded a Sickle call with raw ETH (`tx.value`) and
+   * the Sickle wrapped LESS than that, the delta is the vfat fee taken in raw
+   * ETH (no log of its own — recovered offline as tx.value − Σ wrapped):
+   * emitted as transfer:send flagged `vfat_fee` at the first wrap log.
+   */
+  private decodeWraps(
+    raw: RawTx,
+    rawJson: BaseRawJson,
+    logs: ParsedLog[],
+    roles: TxRoles,
+  ): TaxEvent[] {
     const events: TaxEvent[] = [];
     const involved = (address: string): boolean =>
       roles.owners.has(address) || roles.proxies.has(address);
+    let wrappedTotal = 0n;
+    let firstWrapLogIndex: number | undefined;
     for (const log of logs) {
       if (log.address !== WETH_TOKEN || log.topics.length < 2) continue;
       const topic0 = log.topics[0];
@@ -356,6 +361,10 @@ export class AerodromeHandler extends UniV3LikeHandler {
       const amount = BigInt(log.data === '0x' ? '0x0' : log.data);
       if (amount === 0n) continue;
       const wrap = topic0 === WETH_DEPOSIT_TOPIC;
+      if (wrap) {
+        wrappedTotal += amount;
+        firstWrapLogIndex ??= log.logIndex;
+      }
       events.push({
         type: 'transfer',
         subtype: wrap ? 'wrap' : 'unwrap',
@@ -373,6 +382,31 @@ export class AerodromeHandler extends UniV3LikeHandler {
         handlerVersion: this.version,
       });
     }
+
+    // vfat raw-ETH fee: only meaningful on owner-funded Sickle calls.
+    const txValue = BigInt(rawJson.tx.value ?? '0x0');
+    if (
+      roles.proxies.size > 0 &&
+      roles.owners.has(rawJson.tx.from.toLowerCase()) &&
+      firstWrapLogIndex !== undefined &&
+      txValue > wrappedTotal
+    ) {
+      events.push({
+        type: 'transfer',
+        subtype: 'send',
+        chain: this.chain,
+        txHash: raw.txHash,
+        logIndex: firstWrapLogIndex,
+        emissionSeq: 1,
+        timestamp: raw.blockTimestamp,
+        wallet: roles.owner,
+        sentAsset: 'ETH',
+        sentAmount: txValue - wrappedTotal,
+        flags: ['vfat_fee'],
+        handlerId: this.id,
+        handlerVersion: this.version,
+      });
+    }
     return events;
   }
 
@@ -382,8 +416,11 @@ export class AerodromeHandler extends UniV3LikeHandler {
 
   /**
    * Unclaimed Sickle→third-party transfers are vfat fee skims →
-   * transfer:send. Sickle↔owner transfers (dust sweeps, net forwards) emit
-   * nothing: Sickle == owner economically.
+   * transfer:send flagged `vfat_fee`, so the §23/§22 engine can classify them
+   * as deductible expense / in-kind disposal deterministically (2025 filed
+   * report convention: income gross + skim as separate expense). Sickle↔owner
+   * transfers (dust sweeps, net forwards) emit nothing: Sickle == owner
+   * economically.
    */
   private decodeSickleSkims(
     raw: RawTx,
@@ -416,6 +453,7 @@ export class AerodromeHandler extends UniV3LikeHandler {
         wallet: roles.owner,
         sentAsset: this.assetSymbol(t.token),
         sentAmount: t.value,
+        flags: ['vfat_fee'],
         handlerId: this.id,
         handlerVersion: this.version,
       });
@@ -483,15 +521,22 @@ function addressesEmitting(logs: ParsedLog[], topics: readonly string[]): Set<st
 /**
  * The owner EOA to attribute events to: the tx sender when it is a configured
  * wallet (user-triggered vfat call), otherwise the first configured wallet
- * appearing in the receipt's transfers (keeper-triggered automation).
+ * appearing in the receipt's transfers (keeper-triggered automation with a
+ * Sickle→owner forward). `undefined` when no configured wallet appears at all
+ * — the caller must route the tx to the manual queue, NEVER to tx.from (a
+ * vfat keeper would otherwise swallow the owner's income).
  */
-function resolveOwner(owners: Set<string>, txFrom: string, transfers: Erc20Transfer[]): string {
+function resolveOwner(
+  owners: Set<string>,
+  txFrom: string,
+  transfers: Erc20Transfer[],
+): string | undefined {
   if (owners.has(txFrom)) return txFrom;
   for (const t of transfers) {
     if (owners.has(t.to)) return t.to;
     if (owners.has(t.from)) return t.from;
   }
-  return txFrom;
+  return undefined;
 }
 
 /** int256 data word `index` (0-based) of a log, two's complement. */

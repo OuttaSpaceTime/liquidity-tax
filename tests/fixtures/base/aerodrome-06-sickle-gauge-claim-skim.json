@@ -3,7 +3,7 @@
   "protocol": "aerodrome",
   "txHash": "0x348c1e9e12cf8f210f633068533b745c0084e2dd2ece1cd338474003cd75f32a",
   "foreign": false,
-  "notes": "vfat Sickle-proxied AERO gauge claim (harvest of a STAKED Slipstream position; tx.to = vfat automation): gauge pays 1337950810432385 wei AERO to the Sickle (log 354), ClaimRewards(from=Sickle) log 355 => lp_reward:gauge_claim GROSS at the claim log, mapped to the owner EOA (Sickle == EOA economically). vfat performance fee 12041557293891 wei AERO skimmed Sickle->vfat fee collector (log 356) => transfer:send (separate deductible expense; income stays gross). Net forward Sickle->EOA 1325909253138494 (log 358) is internal: suppressed. No NPM logs at all in this tx — the Sickle is identified from the ClaimRewards claimer topic.",
+  "notes": "vfat Sickle-proxied AERO gauge claim (harvest of a STAKED Slipstream position; tx.to = vfat automation): gauge pays 1337950810432385 wei AERO to the Sickle (log 354), ClaimRewards(from=Sickle) log 355 => lp_reward:gauge_claim GROSS at the claim log, mapped to the owner EOA (Sickle == EOA economically). vfat performance fee 12041557293891 wei AERO skimmed Sickle->vfat fee collector (log 356) => transfer:send (separate deductible expense; income stays gross). Net forward Sickle->EOA 1325909253138494 (log 358) is internal: suppressed. No NPM logs at all in this tx \u2014 the Sickle is identified from the ClaimRewards claimer topic.",
   "walletsContext": [
     "0x76ab852d7e6c7d91180f5682ed8d009c218d4d6a"
   ],
@@ -182,7 +182,10 @@
       "handlerId": "aerodrome",
       "sentAsset": "AERO",
       "sentAmount": "12041557293891",
-      "timestamp": 1760884585
+      "timestamp": 1760884585,
+      "flags": [
+        "vfat_fee"
+      ]
     }
   ]
 }

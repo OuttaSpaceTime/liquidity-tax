@@ -280,7 +280,10 @@
       "receivedAsset": "WETH",
       "receivedAmount": "9486602011428302",
       "positionId": "base:aerodrome:30730253",
-      "timestamp": 1762388631
+      "timestamp": 1762388631,
+      "flags": [
+        "collect_without_same_tx_decrease"
+      ]
     },
     {
       "type": "lp_fee",
@@ -294,7 +297,10 @@
       "receivedAsset": "USDC",
       "receivedAmount": "32708315",
       "positionId": "base:aerodrome:30730253",
-      "timestamp": 1762388631
+      "timestamp": 1762388631,
+      "flags": [
+        "collect_without_same_tx_decrease"
+      ]
     },
     {
       "type": "transfer",
@@ -307,7 +313,10 @@
       "handlerId": "aerodrome",
       "sentAsset": "WETH",
       "sentAmount": "85379418102854",
-      "timestamp": 1762388631
+      "timestamp": 1762388631,
+      "flags": [
+        "vfat_fee"
+      ]
     },
     {
       "type": "transfer",
@@ -320,7 +329,10 @@
       "handlerId": "aerodrome",
       "sentAsset": "USDC",
       "sentAmount": "294374",
-      "timestamp": 1762388631
+      "timestamp": 1762388631,
+      "flags": [
+        "vfat_fee"
+      ]
     }
   ]
 }

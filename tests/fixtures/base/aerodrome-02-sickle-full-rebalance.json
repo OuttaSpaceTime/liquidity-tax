@@ -3,7 +3,7 @@
   "protocol": "aerodrome",
   "txHash": "0x6e22d4b90d7feb09271e3205921f5a1d05ca46bf42df2897b203c223ea6e64fc",
   "foreign": false,
-  "notes": "vfat Sickle full rebalance in one tx (the gnarly issue-#4 case): collect fees 1509127850442198 WETH + 5602574 USDC for position 29372936 (NPM Collect log 827), remove all principal 846239421182204187 WETH + 2167215498 USDC (DecreaseLiquidity log 838; second NPM Collect log 843 pays out the principal — principal legs labeled at the decrease log, the principal collect emits nothing), vfat performance fee 0.9% on the collected fees skimmed to ops EOA (13582150653979 WETH log 828, 50423 USDC log 830 => transfer:send; income stays gross, fee-net forward Sickle->EOA logs 832/833 suppressed as internal), burn NFT 29372936 (log 845 => close_position), vfat skim 0.01% of principal to ops EOA (WETH log 846, USDC log 848 => transfer:send), swap 1405564545 USDC -> 366238113991093369 WETH (pool swap log 857), mint new position 30347282 (NFT mint log 869, IncreaseLiquidity log 870 => open_position legs). WETH dust sweep to EOA (log 875) suppressed as self transfer.",
+  "notes": "vfat Sickle full rebalance in one tx (the gnarly issue-#4 case): collect fees 1509127850442198 WETH + 5602574 USDC for position 29372936 (NPM Collect log 827), remove all principal 846239421182204187 WETH + 2167215498 USDC (DecreaseLiquidity log 838; second NPM Collect log 843 pays out the principal \u2014 principal legs labeled at the decrease log, the principal collect emits nothing), vfat performance fee 0.9% on the collected fees skimmed to ops EOA (13582150653979 WETH log 828, 50423 USDC log 830 => transfer:send; income stays gross, fee-net forward Sickle->EOA logs 832/833 suppressed as internal), burn NFT 29372936 (log 845 => close_position), vfat skim 0.01% of principal to ops EOA (WETH log 846, USDC log 848 => transfer:send), swap 1405564545 USDC -> 366238113991093369 WETH (pool swap log 857), mint new position 30347282 (NFT mint log 869, IncreaseLiquidity log 870 => open_position legs). WETH dust sweep to EOA (log 875) suppressed as self transfer.",
   "walletsContext": [
     "0x76ab852d7e6c7d91180f5682ed8d009c218d4d6a"
   ],
@@ -976,7 +976,10 @@
       "handlerId": "aerodrome",
       "sentAsset": "WETH",
       "sentAmount": "13582150653979",
-      "timestamp": 1761899861
+      "timestamp": 1761899861,
+      "flags": [
+        "vfat_fee"
+      ]
     },
     {
       "type": "transfer",
@@ -989,7 +992,10 @@
       "handlerId": "aerodrome",
       "sentAsset": "USDC",
       "sentAmount": "50423",
-      "timestamp": 1761899861
+      "timestamp": 1761899861,
+      "flags": [
+        "vfat_fee"
+      ]
     },
     {
       "type": "lp_withdraw",
@@ -1030,7 +1036,10 @@
       "handlerId": "aerodrome",
       "sentAsset": "WETH",
       "sentAmount": "84623942118220",
-      "timestamp": 1761899861
+      "timestamp": 1761899861,
+      "flags": [
+        "vfat_fee"
+      ]
     },
     {
       "type": "transfer",
@@ -1043,7 +1052,10 @@
       "handlerId": "aerodrome",
       "sentAsset": "USDC",
       "sentAmount": "216721",
-      "timestamp": 1761899861
+      "timestamp": 1761899861,
+      "flags": [
+        "vfat_fee"
+      ]
     },
     {
       "type": "swap",

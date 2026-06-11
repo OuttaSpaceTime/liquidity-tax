@@ -208,7 +208,7 @@ describe('DecoderRegistry — phase 3 (aggregation hooks)', () => {
 });
 
 describe('DecoderRegistry — duplicate-emission guard', () => {
-  it('throws DuplicateEmissionError naming both handlers on a full 6-tuple collision', () => {
+  it('throws DuplicateEmissionError naming both handlers on a (log_index, emission_seq) collision', () => {
     const registry = newRegistry();
     const collide = (handlerId: string) => makeEvent({ handlerId, logIndex: 2, emissionSeq: 0 });
     registry.registerHandler(
@@ -230,9 +230,10 @@ describe('DecoderRegistry — duplicate-emission guard', () => {
     expect(message).toContain('handler-b');
   });
 
-  it('does not throw when type/subtype differ on the same (log_index, emission_seq)', () => {
-    // 6-tuple key includes type + subtype — same slot with different
-    // classification is not an emission collision (per issue #3 spec).
+  it('throws even when type/subtype differ on the same (log_index, emission_seq)', () => {
+    // The guard key matches the DB unique constraint events_uq (4-tuple): two
+    // events differing only in classification would still collide at insert,
+    // so they must fail here with the descriptive error.
     const registry = newRegistry();
     registry.registerHandler(
       makeHandler({
@@ -255,7 +256,7 @@ describe('DecoderRegistry — duplicate-emission guard', () => {
       }),
     );
 
-    expect(() => registry.decode(makeRawTx())).not.toThrow();
+    expect(() => registry.decode(makeRawTx())).toThrow(DuplicateEmissionError);
   });
 });
 

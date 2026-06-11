@@ -232,11 +232,25 @@ export const suilendHandler: Handler = {
     const rates = new Map<string, ReserveRate>();
     const sevenKSwaps: Array<{ index: number; payload: SevenKSwapPayload }> = [];
     let sevenKConfirm: SevenKSwapPayload | undefined;
+    const settleSwaps: Array<{ index: number; payload: AggregatorSettlePayload }> = [];
 
-    /** ctokens → underlying via the reserve exchange rate; ctokens 1:1 if no snapshot. */
-    const toUnderlying = (ctokens: bigint, coin: string): bigint => {
+    const problems: string[] = [];
+
+    /**
+     * ctokens → underlying via the reserve exchange rate. NO silent 1:1
+     * fallback: the rate only grows over time, so assuming 1:1 understates
+     * the underlying — a missing same-tx ReserveAssetDataEvent snapshot is a
+     * problem (→ manual queue), not an approximation.
+     */
+    const toUnderlying = (ctokens: bigint, coin: string, context: string): bigint | undefined => {
       const rate = rates.get(coin);
-      if (rate === undefined || rate.ctokenSupply === 0n) return ctokens;
+      if (rate === undefined || rate.ctokenSupply === 0n) {
+        problems.push(
+          `${context}: no same-tx ReserveAssetDataEvent exchange rate for ${coin} — ` +
+            'ctoken→underlying conversion needs manual labeling',
+        );
+        return undefined;
+      }
       return (ctokens * rate.supplyWad) / (rate.ctokenSupply * 10n ** 18n);
     };
 
@@ -308,12 +322,15 @@ export const suilendHandler: Handler = {
             pendingMints,
             (m) => m.coin === p.coin_type.name && m.ctokens === ctokens,
           );
+          const sentAmount =
+            mint?.liquidity ?? toUnderlying(ctokens, p.coin_type.name, `DepositEvent[${index}]`);
+          if (sentAmount === undefined) break; // problem pushed → unclassified below
           emit({
             type: 'lend_supply',
             subtype: 'deposit',
             logIndex: index,
             sentAsset: assetSymbol(p.coin_type),
-            sentAmount: mint?.liquidity ?? toUnderlying(ctokens, p.coin_type.name),
+            sentAmount,
             ...(mint?.autoCompounded === true ? { flags: ['auto_compounded'] as Flag[] } : {}),
           });
           break;
@@ -392,19 +409,9 @@ export const suilendHandler: Handler = {
           sevenKConfirm = rawEvent.parsedJson as SevenKSwapPayload;
           break;
 
-        case AGGREGATOR_SETTLE_SWAP: {
-          const p = rawEvent.parsedJson as AggregatorSettlePayload;
-          emit({
-            type: 'swap',
-            subtype: 'trade',
-            logIndex: index,
-            sentAsset: assetSymbol(p.coin_in),
-            sentAmount: BigInt(p.amount_in),
-            receivedAsset: assetSymbol(p.coin_out),
-            receivedAmount: BigInt(p.amount_out),
-          });
+        case AGGREGATOR_SETTLE_SWAP:
+          settleSwaps.push({ index, payload: rawEvent.parsedJson as AggregatorSettlePayload });
           break;
-        }
 
         default:
           if (type.endsWith(SUILEND_EVENT_TYPE_SUFFIXES.claimStakingRewards)) break;
@@ -414,21 +421,52 @@ export const suilendHandler: Handler = {
       }
     }
 
-    // 7K router: one swap per routed trade — totals from ConfirmSwapEvent
-    // (multi-hop SwapEvents are partial routes), pinned to the first
-    // SwapEvent's index (cross-01).
-    const firstSevenK = sevenKSwaps[0];
-    if (firstSevenK !== undefined) {
-      const totals = sevenKConfirm ?? firstSevenK.payload;
+    // Aggregator route totals — ONE swap:trade per route. A single route can
+    // emit BOTH the settle::Swap summary and the 7K router::SwapEvent mirror
+    // (and other handlers in the same registry face the same pair), so route
+    // summaries deduplicate by (amount_in, amount_out), not by event index.
+    const emittedTrades: Array<{ sent: bigint; received: bigint }> = [];
+    const emitTrade = (
+      logIndex: number,
+      sentAsset: string,
+      sent: bigint,
+      receivedAsset: string,
+      received: bigint,
+    ): void => {
+      if (emittedTrades.some((t) => t.sent === sent && t.received === received)) return;
+      emittedTrades.push({ sent, received });
       emit({
         type: 'swap',
         subtype: 'trade',
-        logIndex: firstSevenK.index,
-        sentAsset: assetSymbol(totals.from),
-        sentAmount: BigInt(totals.amount_in),
-        receivedAsset: assetSymbol(totals.target),
-        receivedAmount: BigInt(totals.amount_out),
+        logIndex,
+        sentAsset,
+        sentAmount: sent,
+        receivedAsset,
+        receivedAmount: received,
       });
+    };
+    // settle::Swap summaries at their own index (suilend-03).
+    for (const settle of settleSwaps) {
+      emitTrade(
+        settle.index,
+        assetSymbol(settle.payload.coin_in),
+        BigInt(settle.payload.amount_in),
+        assetSymbol(settle.payload.coin_out),
+        BigInt(settle.payload.amount_out),
+      );
+    }
+    // 7K router: totals from ConfirmSwapEvent (multi-hop SwapEvents are
+    // partial routes), pinned to the first SwapEvent's index (cross-01).
+    const firstSevenK = sevenKSwaps[0];
+    if (firstSevenK !== undefined) {
+      const totals = sevenKConfirm ?? firstSevenK.payload;
+      emitTrade(
+        firstSevenK.index,
+        assetSymbol(totals.from),
+        BigInt(totals.amount_in),
+        assetSymbol(totals.target),
+        BigInt(totals.amount_out),
+      );
     }
 
     // Standalone mints (underlying → wallet-held ctokens, no obligation leg).
@@ -445,36 +483,48 @@ export const suilendHandler: Handler = {
 
     // Standalone withdraws (ctokens left the obligation but were not redeemed).
     for (const withdraw of pendingWithdraws) {
+      const receivedAmount = toUnderlying(
+        withdraw.ctokens,
+        withdraw.coin,
+        `WithdrawEvent[${withdraw.index}]`,
+      );
+      if (receivedAmount === undefined) continue;
       emit({
         type: 'lend_supply',
         subtype: 'withdraw',
         logIndex: withdraw.index,
         receivedAsset: assetSymbol({ name: withdraw.coin }),
-        receivedAmount: toUnderlying(withdraw.ctokens, withdraw.coin),
+        receivedAmount,
       });
     }
 
     // Liquidations (liquidator's perspective — see header).
     for (const liq of pendingLiquidations) {
-      emit({
-        type: 'liquidation',
-        subtype: 'collateral_seized',
-        logIndex: liq.index,
-        emissionSeq: 0,
-        receivedAsset: assetSymbol(liq.withdrawCoin),
-        receivedAmount:
-          liq.collateralUnderlying ?? toUnderlying(liq.netCtokens, liq.withdrawCoin.name),
-      });
-      emit({
-        type: 'liquidation',
-        subtype: 'debt_repaid',
-        logIndex: liq.index,
-        emissionSeq: 1,
-        sentAsset: assetSymbol(liq.repayCoin),
-        sentAmount: liq.repayAmount,
-      });
+      const seized =
+        liq.collateralUnderlying ??
+        toUnderlying(liq.netCtokens, liq.withdrawCoin.name, `LiquidateEvent[${liq.index}]`);
+      if (seized !== undefined) {
+        emit({
+          type: 'liquidation',
+          subtype: 'collateral_seized',
+          logIndex: liq.index,
+          emissionSeq: 0,
+          receivedAsset: assetSymbol(liq.withdrawCoin),
+          receivedAmount: seized,
+        });
+        emit({
+          type: 'liquidation',
+          subtype: 'debt_repaid',
+          logIndex: liq.index,
+          emissionSeq: 1,
+          sentAsset: assetSymbol(liq.repayCoin),
+          sentAmount: liq.repayAmount,
+        });
+      }
     }
 
+    // Partial decodes must not silently understate taxable activity.
+    if (problems.length > 0) return { kind: 'unclassified', reason: problems.join('; ') };
     if (out.length === 0) return { kind: 'skip' };
     return { kind: 'ok', events: out };
   },

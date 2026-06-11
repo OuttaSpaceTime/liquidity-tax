@@ -42,7 +42,11 @@ export type Flag =
   | 'wrapped_native'
   | 'dust'
   | 'self_transfer'
-  | 'flash_loan';
+  | 'flash_loan'
+  /** vfat fee skim (Sickle→fee-collector or raw-ETH delta) — deductible expense, not a plain send. */
+  | 'vfat_fee'
+  /** lp_fee from a Collect with no same-tx DecreaseLiquidity: may contain principal of an earlier decrease tx — pair with the unclassified sibling before trusting the income split. */
+  | 'collect_without_same_tx_decrease';
 
 export type PositionId = `${Chain}:${Protocol}:${string}`;
 

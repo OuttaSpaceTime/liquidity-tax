@@ -27,7 +27,13 @@ const BASE58 = getBase58Encoder();
 export interface FlatInstruction {
   /** Zero-based index in the flattened sequence — the Solana `logIndex` convention. */
   flatIndex: number;
-  /** 0 = outer, 1 = CPI (jsonParsed nests only one level). */
+  /**
+   * 0 = outer; inner instructions = `stackHeight - 1` (jsonParsed inner
+   * instructions carry `stackHeight` starting at 2; deeper CPI levels — e.g.
+   * a Whirlpool ix invoked by a router, or a token-2022 transfer-hook's
+   * internal transfer — carry 3+). Defaults to depth 1 when absent (legacy
+   * payloads without stackHeight).
+   */
   depth: number;
   programId: string;
   /** Base58 instruction data (absent on RPC-parsed instructions). */
@@ -44,6 +50,8 @@ interface JsonParsedInstruction {
   accounts?: readonly string[];
   parsed?: unknown;
   program?: string;
+  /** CPI nesting level of inner instructions (2 = direct child of the outer ix). */
+  stackHeight?: number | null;
 }
 
 interface JsonParsedTxShape {
@@ -80,7 +88,7 @@ export function flattenParsedTransaction(raw: unknown): FlatInstruction[] {
   };
   outer.forEach((ix, index) => {
     push(ix, 0);
-    for (const inner of innerByIndex.get(index) ?? []) push(inner, 1);
+    for (const inner of innerByIndex.get(index) ?? []) push(inner, (inner.stackHeight ?? 2) - 1);
   });
   return flat;
 }
