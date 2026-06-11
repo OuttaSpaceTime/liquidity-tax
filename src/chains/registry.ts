@@ -2,6 +2,7 @@ import type { Chain } from '../types/event';
 import type { Wallet } from '../config/wallets-loader';
 import type { Db } from '../db/client';
 import { createSolanaIngestAdapter } from './solana/ingest';
+import { baseIngestAdapter } from './base/ingest';
 import { createSuiIngestAdapter } from './sui/ingest';
 
 export interface IngestOptions {
@@ -55,6 +56,7 @@ export class ChainRegistry {
  */
 export function createDefaultChainRegistry(): ChainRegistry {
   const registry = new ChainRegistry();
+  registry.register(baseIngestAdapter); // [1A.1]
   registry.register(createSolanaIngestAdapter()); // [1B.1]
   registry.register(createSuiIngestAdapter()); // [1C.2]
   return registry;
