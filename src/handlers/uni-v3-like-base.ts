@@ -1,4 +1,13 @@
-import type { BaseRawJson, RawRpcLog } from '../chains/base/ingest';
+import {
+  TRANSFER_TOPIC,
+  erc20Transfers,
+  parseLog,
+  topicAddress,
+  type Erc20Transfer,
+  type ParsedLog,
+} from '../chains/base/log-utils';
+import { asBaseRawJson, type BaseRawJson } from '../chains/base/raw-json';
+import { baseTokenSymbol } from '../chains/base/tokens';
 import type { DecodeContext, DecodeResult, Handler, RawTx } from '../decoder/types';
 import type { Chain, Flag, PositionId, Protocol, TaxEvent } from '../types/event';
 
@@ -41,8 +50,6 @@ import type { Chain, Flag, PositionId, Protocol, TaxEvent } from '../types/event
  */
 
 // keccak256 signatures (verified against real Base receipts in tests/fixtures/base/)
-export const TRANSFER_TOPIC =
-  '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
 export const INCREASE_LIQUIDITY_TOPIC =
   '0x3067048beee31b25b2f1681f88dac838c8bba36af25bfb2b7cf7473a5847e35f';
 export const DECREASE_LIQUIDITY_TOPIC =
@@ -50,41 +57,6 @@ export const DECREASE_LIQUIDITY_TOPIC =
 export const COLLECT_TOPIC = '0x40d0efd1a53d60ecbf40971b9daf7dc90178c3aadc7aab1765632738fa8b8f01';
 
 export const ZERO_TOPIC = `0x${'0'.repeat(64)}`;
-
-/**
- * Base-chain ERC-20 address → symbol, for the fixture/report asset naming
- * convention (symbols, not addresses — matches the positions/eur-price
- * conventions and `src/prices/token-map.ts`). Unknown tokens fall back to
- * their lowercase address. Follow-up: lift into a shared module once the
- * aerodrome/aave handlers need it too.
- */
-export const BASE_TOKEN_SYMBOLS: Readonly<Record<string, string>> = {
-  '0x4200000000000000000000000000000000000006': 'WETH',
-  '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913': 'USDC',
-  '0xfde4c96c8593536e31f229ea8f37b2ada2699bb2': 'USDT',
-  '0x940181a94a35a4569e4529a3cdfb74e38fd98631': 'AERO',
-  '0xcbb7c0000ab88b473b1f5afd9ef808440eed33bf': 'cbBTC',
-  '0x2ae3f1ec7f1f5012cfeab0185bfc7aa3cf0dec22': 'cbETH',
-  '0x0b3e328455c4059eeb9e3f84b5543f74e24e7e1b': 'VIRTUAL',
-  // symbol() verified on-chain during fixture capture
-  '0x532f27101965dd16442e59d40670faf5ebb142e4': 'BRETT',
-  '0x11030f79109269d796fd0fb956d6244e502757f7': 'CTR',
-};
-
-export interface ParsedLog {
-  logIndex: number;
-  address: string;
-  topics: string[];
-  data: string;
-}
-
-export interface Erc20Transfer {
-  logIndex: number;
-  token: string;
-  from: string;
-  to: string;
-  value: bigint;
-}
 
 interface NpmGroup {
   tokenId: bigint;
@@ -209,7 +181,7 @@ export abstract class UniV3LikeHandler implements Handler {
       // (the matched transfers' sender — a Sickle proxy or the EOA itself),
       // never tx.from. A keeper-triggered Sickle compound has tx.from = the
       // vfat keeper; attributing the lp_deposit there would silently drop the
-      // re-deposit basis from the owner's position lifecycle (review finding).
+      // re-deposit basis from the owner's position lifecycle.
       const funder = tokens.transfer0?.from ?? tokens.transfer1?.from;
       const wallet = this.resolveWallet(
         group.minted !== undefined ? topicAddress(group.minted.topics[2]!) : (funder ?? txFrom),
@@ -343,7 +315,7 @@ export abstract class UniV3LikeHandler implements Handler {
 
   /** Asset naming: symbol for known Base tokens, lowercase address otherwise. */
   protected assetSymbol(tokenAddress: string): string {
-    return BASE_TOKEN_SYMBOLS[tokenAddress] ?? tokenAddress;
+    return baseTokenSymbol(tokenAddress);
   }
 
   /**
@@ -365,9 +337,7 @@ export abstract class UniV3LikeHandler implements Handler {
   // -------------------------------------------------------------------------
 
   protected rawJson(raw: RawTx): BaseRawJson | undefined {
-    const rawJson = raw.rawJson as Partial<BaseRawJson> | null;
-    if (rawJson?.receipt?.logs === undefined || rawJson.tx === undefined) return undefined;
-    return rawJson as BaseRawJson;
+    return asBaseRawJson(raw.rawJson);
   }
 
   /** Group the NPM logs of this receipt by position tokenId, in first-log order. */
@@ -415,28 +385,6 @@ export abstract class UniV3LikeHandler implements Handler {
 // ---------------------------------------------------------------------------
 // Pure helpers
 // ---------------------------------------------------------------------------
-
-function parseLog(log: RawRpcLog): ParsedLog {
-  return {
-    logIndex: Number.parseInt(log.logIndex, 16),
-    address: log.address.toLowerCase(),
-    topics: log.topics,
-    data: log.data,
-  };
-}
-
-/** All ERC-20 Transfer logs (3 topics — ERC-721 Transfers carry 4) in log order. */
-function erc20Transfers(logs: ParsedLog[]): Erc20Transfer[] {
-  return logs
-    .filter((log) => log.topics[0] === TRANSFER_TOPIC && log.topics.length === 3)
-    .map((log) => ({
-      logIndex: log.logIndex,
-      token: log.address,
-      from: topicAddress(log.topics[1]!),
-      to: topicAddress(log.topics[2]!),
-      value: BigInt(log.data === '0x' ? '0x0' : log.data),
-    }));
-}
 
 /** `amount0`/`amount1` are data words 1 and 2 for all three NPM events. */
 export function legAmounts(log: ParsedLog): LegAmounts {
@@ -519,9 +467,4 @@ function nonzeroLegs(
     legs.push({ seq: legs.length, token: tokens.token1, amount: amounts.amount1 });
   }
   return legs;
-}
-
-/** Last 20 bytes of a 32-byte topic/word, lowercase `0x`-prefixed. */
-export function topicAddress(word: string): string {
-  return `0x${word.slice(-40)}`.toLowerCase();
 }

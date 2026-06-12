@@ -7,7 +7,7 @@ import { DecoderRegistry } from '../../src/decoder';
 import { rawTxs } from '../../db/schema';
 import { AerodromeHandler } from '../../src/handlers/aerodrome';
 import { groupEventsByPosition, reducePositionEvents } from '../../src/positions';
-import type { BaseRawJson } from '../../src/chains/base/ingest';
+import type { BaseRawJson } from '../../src/chains/base/raw-json';
 import type { TaxEvent } from '../../src/types/event';
 
 /**

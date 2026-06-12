@@ -7,7 +7,7 @@ import { DecoderRegistry } from '../../src/decoder';
 import { rawTxs } from '../../db/schema';
 import { UniswapV3Handler } from '../../src/handlers/uniswap-v3';
 import { groupEventsByPosition, reducePositionEvents } from '../../src/positions';
-import type { BaseRawJson } from '../../src/chains/base/ingest';
+import type { BaseRawJson } from '../../src/chains/base/raw-json';
 import type { TaxEvent } from '../../src/types/event';
 
 /**

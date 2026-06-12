@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { createTestDb } from '../../helpers/db';
 import { createDefaultRegistry } from '../../../src/decoder';
 import { rawTxs } from '../../../db/schema';
-import type { BaseRawJson } from '../../../src/chains/base/ingest';
+import type { BaseRawJson } from '../../../src/chains/base/raw-json';
 import type { TaxEvent } from '../../../src/types/event';
 
 /**

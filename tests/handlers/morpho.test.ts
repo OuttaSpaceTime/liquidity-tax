@@ -6,7 +6,7 @@ import { createTestDb } from '../helpers/db';
 import { DecoderRegistry } from '../../src/decoder';
 import { rawTxs } from '../../db/schema';
 import { MorphoHandler } from '../../src/handlers/morpho';
-import type { BaseRawJson } from '../../src/chains/base/ingest';
+import type { BaseRawJson } from '../../src/chains/base/raw-json';
 import type { TaxEvent } from '../../src/types/event';
 
 /**

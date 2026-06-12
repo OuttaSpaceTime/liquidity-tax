@@ -11,10 +11,10 @@ import {
   sickleImplementationOf,
   storeBundles,
   withBackoff,
-  type AlchemyAssetTransfer,
   type BaseTxBundle,
   type RpcRequestFn,
 } from '../../../src/chains/base/ingest';
+import type { AlchemyAssetTransfer } from '../../../src/chains/base/raw-json';
 
 // ---------------------------------------------------------------------------
 // Synthetic helpers — infrastructure tests only (protocol handlers use real

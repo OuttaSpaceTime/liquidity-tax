@@ -1,12 +1,13 @@
-import type { BaseRawJson } from '../chains/base/ingest';
-import type { DecodeContext, DecodeResult, RawTx } from '../decoder/types';
-import type { Chain, Protocol, TaxEvent } from '../types/event';
 import {
-  UniV3LikeHandler,
+  signedWord,
   topicAddress,
   type Erc20Transfer,
   type ParsedLog,
-} from './uni-v3-like-base';
+} from '../chains/base/log-utils';
+import type { BaseRawJson } from '../chains/base/raw-json';
+import type { DecodeContext, DecodeResult, RawTx } from '../decoder/types';
+import type { Chain, Protocol, TaxEvent } from '../types/event';
+import { UniV3LikeHandler } from './uni-v3-like-base';
 
 /**
  * Aerodrome handler for Base ([1A.4], issue #8).
@@ -537,14 +538,4 @@ function resolveOwner(
     if (owners.has(t.from)) return t.from;
   }
   return undefined;
-}
-
-/** int256 data word `index` (0-based) of a log, two's complement. */
-function signedWord(data: string, index: number): bigint {
-  const start = 2 + index * 64;
-  const word = data.slice(start, start + 64);
-  if (word.length === 0) return 0n;
-  let value = BigInt(`0x${word}`);
-  if (value >= 1n << 255n) value -= 1n << 256n;
-  return value;
 }

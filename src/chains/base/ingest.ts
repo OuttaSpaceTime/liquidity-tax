@@ -5,6 +5,13 @@ import { upsertRawTxs, type RawTxInsert } from '../../db/repos/raw-txs';
 import type { Wallet } from '../../config/wallets-loader';
 import type { IngestAdapter, IngestOptions, IngestResult } from '../registry';
 import { createBaseClient, createPublicBaseClient } from './client';
+import { TRANSFER_TOPIC, topicAddress } from './log-utils';
+import type {
+  AlchemyAssetTransfer,
+  BaseRawJson,
+  RawRpcReceipt,
+  RawRpcTransaction,
+} from './raw-json';
 
 /**
  * Base (EVM) ingest adapter — issue #5 ([1A.1]).
@@ -46,60 +53,8 @@ const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 const FETCH_CONCURRENCY = 8;
 const STORE_CHUNK = 50;
 
-// ---------------------------------------------------------------------------
-// Raw RPC shapes (verbatim Alchemy/JSON-RPC payloads, hex quantities)
-// ---------------------------------------------------------------------------
-
-export interface AlchemyAssetTransfer {
-  hash: string;
-  blockNum: string;
-  from: string;
-  to: string | null;
-  category: string;
-  asset?: string | null;
-  value?: number | null;
-  tokenId?: string | null;
-  rawContract?: { address?: string | null; value?: string | null; decimal?: string | null };
-  erc1155Metadata?: Array<{ tokenId: string; value: string }> | null;
-  metadata?: { blockTimestamp?: string };
-  uniqueId?: string;
-}
-
-export interface RawRpcTransaction {
-  hash: string;
-  from: string;
-  to: string | null;
-  blockNumber: string;
-  value: string;
-  input: string;
-  gas: string;
-  nonce: string;
-  transactionIndex: string;
-  [key: string]: unknown;
-}
-
-export interface RawRpcLog {
-  address: string;
-  topics: string[];
-  data: string;
-  logIndex: string;
-  [key: string]: unknown;
-}
-
-export interface RawRpcReceipt {
-  transactionHash: string;
-  status: string;
-  gasUsed: string;
-  effectiveGasPrice: string;
-  /** OP-stack L1 data fee — present on Base receipts. */
-  l1Fee?: string | null;
-  blockNumber: string;
-  from: string;
-  to: string | null;
-  contractAddress: string | null;
-  logs: RawRpcLog[];
-  [key: string]: unknown;
-}
+// Raw RPC payload shapes (verbatim Alchemy/JSON-RPC, hex quantities) live in
+// ./raw-json.ts — the payload contract shared with the Base handlers.
 
 /** Everything needed to persist one tx; `raw_json` column stores exactly this minus `hash`. */
 export interface BaseTxBundle {
@@ -111,16 +66,6 @@ export interface BaseTxBundle {
   /** All asset-transfer entries Alchemy returned for this hash. */
   transfers: AlchemyAssetTransfer[];
   /** Lowercased owner-side enumeration targets (wallets + sickles) that matched this tx. */
-  addresses: string[];
-}
-
-/** Shape of `raw_txs.raw_json` for chain=base — protocol handlers parse this. */
-export interface BaseRawJson {
-  source: 'alchemy';
-  tx: RawRpcTransaction;
-  receipt: RawRpcReceipt;
-  blockTimestamp: number;
-  transfers: AlchemyAssetTransfer[];
   addresses: string[];
 }
 
@@ -320,7 +265,6 @@ export interface TxRef {
   timestamp: number;
 }
 
-const TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
 // keccak256('TransferSingle(address,address,address,uint256,uint256)')
 const TRANSFER_SINGLE_TOPIC = '0xc3d58168c5ae7397731d063d5bbf3d657854427343f4c083240f7aacaa2d0f62';
 // keccak256('TransferBatch(address,address,address,uint256[],uint256[])')
@@ -338,10 +282,10 @@ interface EnumeratedLog {
   blockTimestamp?: string;
 }
 
-/** Last 20 bytes of a 32-byte topic as a lowercase address. */
+/** Last 20 bytes of a 32-byte topic as a lowercase address; undefined for malformed topics. */
 function topicToAddress(topic: string | undefined): string | undefined {
   if (topic === undefined || topic.length !== 66) return undefined;
-  return `0x${topic.slice(26).toLowerCase()}`;
+  return topicAddress(topic);
 }
 
 function isOversizeLogsError(error: unknown): boolean {
@@ -466,7 +410,7 @@ function callResultToAddress(result: unknown): string | null {
  * be one of the configured owner wallets. Bytecode alone is NOT enough: a
  * third party's Sickle that ever appears as a transfer counterparty shares
  * the implementation, and enumerating it would ingest its whole history and
- * attribute its LP income to us (review finding). Returns lowercased,
+ * attribute its LP income to us. Returns lowercased,
  * ownership-verified Sickle addresses.
  */
 export async function discoverSickles(

@@ -1,7 +1,8 @@
-import type { BaseRawJson, RawRpcLog } from '../chains/base/ingest';
+import { dataWord, topicAddress } from '../chains/base/log-utils';
+import { asBaseRawJson, type BaseRawJson, type RawRpcLog } from '../chains/base/raw-json';
+import { baseTokenSymbol } from '../chains/base/tokens';
 import type { DecodeContext, DecodeResult, Handler, RawTx } from '../decoder/types';
 import type { Chain, TaxEvent } from '../types/event';
-import { BASE_TOKEN_SYMBOLS, topicAddress } from './uni-v3-like-base';
 
 /**
  * Aave V3 handler for Base ([1A.5], issue #9). viem-native repo: no ethers,
@@ -230,19 +231,10 @@ export class AaveV3Handler implements Handler {
 
   /** Asset naming convention: symbol for known Base tokens, lowercase address otherwise. */
   protected assetSymbol(tokenAddress: string): string {
-    return BASE_TOKEN_SYMBOLS[tokenAddress] ?? tokenAddress;
+    return baseTokenSymbol(tokenAddress);
   }
 
   private rawJson(raw: RawTx): BaseRawJson | undefined {
-    const rawJson = raw.rawJson as Partial<BaseRawJson> | null;
-    if (rawJson?.receipt?.logs === undefined || rawJson.tx === undefined) return undefined;
-    return rawJson as BaseRawJson;
+    return asBaseRawJson(raw.rawJson);
   }
-}
-
-/** uint256 data word `index` (0-based) of a log. */
-function dataWord(data: string, index: number): bigint {
-  const start = 2 + index * 64;
-  const word = data.slice(start, start + 64);
-  return word.length === 0 ? 0n : BigInt(`0x${word}`);
 }

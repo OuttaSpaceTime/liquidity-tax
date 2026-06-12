@@ -181,7 +181,7 @@ function cpiChildren(flat: readonly FlatInstruction[], ix: WhirlpoolIxRef): Flat
  * extension emit `transferCheckedWithFee` legs (Agave jsonParsed: amount at
  * info.tokenAmount, withheld fee at info.feeAmount) — skipping those would
  * silently drop the corresponding lp_deposit/lp_withdraw/lp_fee event
- * (review finding). Burn/mintTo/closeAccount children under open/close
+ *. Burn/mintTo/closeAccount children under open/close
  * instructions are legitimately skipped. Returns an error string when a V1
  * leg's mint or a withFee leg's fee cannot be resolved.
  */
@@ -321,7 +321,7 @@ export const orcaWhirlpoolHandler: Handler = {
       // transfer (zero-amount transfers included — pinned by fixtures #6-#8).
       // Zero legs found ⇒ the children were lost (e.g. legacy payloads with
       // stackHeight null flattening to the wrong depth) — manual queue, never
-      // a silent no-emit (review finding).
+      // a silent no-emit.
       if (
         legsOrError.length === 0 &&
         (INCREASE_NAMES.has(ix.name) ||
