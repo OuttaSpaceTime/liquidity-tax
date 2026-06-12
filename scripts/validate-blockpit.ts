@@ -2,18 +2,22 @@
  * validate-blockpit.ts — cross-check decoded `events` against the owner's
  * existing Blockpit export (liquidity-sheets/Transactions.csv, READ-ONLY).
  *
- * Run:  bun scripts/validate-blockpit.ts [--csv <path>] > report-body.md
+ * Run:  bun scripts/validate-blockpit.ts [--csv <path>] [--corrected <path>] > report-body.md
  *
  * What it does (see .claude/docs/planning/08-pipeline-validation-20260610.md
  * for the interpreted results):
  *   1. joins Blockpit rows ↔ DB events on Trx. ID (tx hash / digest); rows
  *      without a Trx. ID fall back to a (timestamp ±2 min, asset, amount)
  *      heuristic.
- *   2. coverage both directions per chain, with known-out-of-scope rows
- *      (Bitvavo/CEX, Ethereum/Polygon chains, Manual, Cetus + other
- *      foreign-protocol Sui txs) counted separately.
- *   3. classification agreement: Blockpit Label vs our (type, subtype) via
- *      the EXPECTED_LABELS mapping below.
+ *   2. coverage both directions per chain against SOURCE A (the raw export),
+ *      with known-out-of-scope rows (Bitvavo/CEX, Ethereum/Polygon chains,
+ *      Manual, Cetus + other foreign-protocol Sui txs) counted separately.
+ *   3. classification agreement against SOURCE B (the corrected tax-report
+ *      output, authoritative for labels) via EXPECTED_LABELS_CORRECTED, with
+ *      synthetic injected rows (Trx. ID `lp-…`) counted as known-synthetic
+ *      and every disagreement marked residual (B label == raw label, i.e.
+ *      never corrected) vs deliberate. A raw-label comparison against source
+ *      A via EXPECTED_LABELS is kept for reference.
  *   4. amount agreement on a deterministic sample of 50 matched legs.
  *
  * Privacy: never selects or prints wallet addresses; only tx hashes/digests.
@@ -233,6 +237,45 @@ const EXPECTED_LABELS: Record<string, string[]> = {
   'lend_borrow:repay:out': ['Withdrawal'],
 };
 
+/**
+ * Source B expectations: the owner's CORRECTED pipeline output
+ * (tax-report-2025/04d-lp-positions/Transactions_with_lp_corrections.csv) is
+ * the classification source of truth. Its conventions (verified against the
+ * generating scripts under liquidity-sheets/tax-report-2025/):
+ *   - LP add/remove legs and position-NFT legs → Non-Taxable Out / In
+ *     (basis carry-forward — matches our locked LP-deposit tax policy);
+ *   - lending supply/withdraw/borrow/repay     → Non-Taxable Out / In;
+ *   - LP fees + incentive claims                → Reward (synthetic LP_FEE rows
+ *     carry Trx. IDs like `lp-<pos>-fee-t0` — no on-chain tx, counted as
+ *     known-synthetic);
+ *   - swaps                                     → Trade;
+ *   - plain transfers                           → Withdrawal / Deposit or
+ *     Non-Taxable Out/In (self-transfers).
+ */
+const EXPECTED_LABELS_CORRECTED: Record<string, string[]> = {
+  'swap:trade:out': ['Trade'],
+  'swap:trade:in': ['Trade'],
+  'transfer:wrap:out': ['Trade', 'Non-Taxable Out'],
+  'transfer:wrap:in': ['Trade', 'Non-Taxable In'],
+  'transfer:unwrap:out': ['Trade', 'Non-Taxable Out'],
+  'transfer:unwrap:in': ['Trade', 'Non-Taxable In'],
+  'transfer:send:out': ['Withdrawal', 'Non-Taxable Out'],
+  'lp_deposit:add_liquidity:out': ['Non-Taxable Out'],
+  'lp_deposit:open_position:out': ['Non-Taxable Out'],
+  'lp_deposit:open_position:in': ['Non-Taxable In'],
+  'lp_withdraw:remove_liquidity:in': ['Non-Taxable In'],
+  'lp_withdraw:close_position:in': ['Non-Taxable In'],
+  'lp_withdraw:close_position:out': ['Non-Taxable Out'],
+  'lp_fee:collect:in': ['Reward'],
+  'lp_reward:gauge_claim:in': ['Reward', 'Airdrop'],
+  'lp_reward:emission_claim:in': ['Reward', 'Airdrop'],
+  'lend_supply:deposit:out': ['Non-Taxable Out'],
+  'lend_supply:withdraw:in': ['Non-Taxable In'],
+  'lend_reward:claim:in': ['Reward', 'Airdrop', 'Income'],
+  'lend_borrow:borrow:in': ['Non-Taxable In'],
+  'lend_borrow:repay:out': ['Non-Taxable Out'],
+};
+
 // ---------------------------------------------------------------------------
 // Out-of-scope protocol detection (Sui txs Blockpit covers but we deliberately
 // don't decode — no Cetus/foreign-DEX handler). Detected via package ids in
@@ -243,8 +286,7 @@ const EXPECTED_LABELS: Record<string, string[]> = {
 
 const OUT_OF_SCOPE_MARKERS: Record<string, string> = {
   '0x1eabed72c53feb3805120a081dc15963c204dc8d091542592abaf7a35689b2fb': 'Cetus CLMM',
-  '0xeffc8ae61f439bb34c9b905ff8f29ec56873dcedf81c7123ff2f1f67c45ec302':
-    'Cetus (aggregator leg)',
+  '0xeffc8ae61f439bb34c9b905ff8f29ec56873dcedf81c7123ff2f1f67c45ec302': 'Cetus (aggregator leg)',
   '::cetus::CETUS': 'CETUS coin',
   '0x25929e7f29e0a30eb4e692952ba1b5b65a3a4d65ab5f2a32e1ba3edcb587f26d':
     'unidentified Sui CLMM (0x2592…f26d)',
@@ -351,9 +393,10 @@ const rawTxSet = new Set(
 );
 const unclassifiedReason = new Map(
   (
-    sqlite
-      .query(`SELECT chain || ':' || tx_hash AS k, reason FROM unclassified`)
-      .all() as { k: string; reason: string }[]
+    sqlite.query(`SELECT chain || ':' || tx_hash AS k, reason FROM unclassified`).all() as {
+      k: string;
+      reason: string;
+    }[]
   ).map((r) => [r.k, r.reason]),
 );
 
@@ -468,7 +511,10 @@ for (const [k, txRows] of csvByTx) {
 
 const csvTsMin = Math.min(...inScope.map((r) => r.ts));
 const csvTsMax = Math.max(...inScope.map((r) => r.ts));
-const dbMisses = new Map<string, { count: number; examples: string[]; types: Map<string, number> }>();
+const dbMisses = new Map<
+  string,
+  { count: number; examples: string[]; types: Map<string, number> }
+>();
 const dbCovered = new Map<Chain, number>();
 const dbTotal = new Map<Chain, number>();
 
@@ -564,10 +610,7 @@ for (const t of coveredTxs) {
     const eg = t.groups.ev.get(gk);
     if (!eg || cg.sum <= 0 || eg.rawSum <= 0) continue;
     const key = `${t.chain}:${eg.symbol}`;
-    inferencePairs.set(key, [
-      ...(inferencePairs.get(key) ?? []),
-      { raw: eg.rawSum, csv: cg.sum },
-    ]);
+    inferencePairs.set(key, [...(inferencePairs.get(key) ?? []), { raw: eg.rawSum, csv: cg.sum }]);
     for (const l of eg.legs)
       assetIdBySymbol.set(key, (assetIdBySymbol.get(key) ?? new Set()).add(l.assetId));
   }
@@ -776,6 +819,171 @@ for (const m of pairedLegs) {
   }
 }
 
+// --- Source B: corrected pipeline output — classification source of truth ----
+//
+// The raw export (source A, above) contains known misclassifications; the
+// owner's corrected tax-report output is authoritative for labels. Rows whose
+// Trx. ID starts with `lp-` are SYNTHETIC injected legs (LP basis
+// carry-forward / fee-at-close rows generated by inject_lp_events.py) with no
+// on-chain tx — counted as known-synthetic, never as missing coverage. The
+// correction pipeline also REMOVED every Sickle/NPM-related raw row and
+// replaced them with those synthetic per-position rows, so Base Sickle txs we
+// decode are expected to be absent from B (bucketed as removed-by-correction).
+
+const correctedFlag = process.argv.indexOf('--corrected');
+const CORRECTED_PATH =
+  correctedFlag >= 0
+    ? process.argv[correctedFlag + 1]
+    : '/home/felix/Code/Misc/defi-tracker/liquidity-sheets/tax-report-2025/04d-lp-positions/Transactions_with_lp_corrections.csv';
+
+const bRowsAll = await readCsv(CORRECTED_PATH);
+const bSynthetic: CsvRow[] = [];
+const bExcluded = { cex: 0, ethereum: 0, polygon: 0, manual: 0, otherSource: 0 };
+const bInScope: CsvRow[] = [];
+for (const r of bRowsAll) {
+  if (r.txId.startsWith('lp-')) bSynthetic.push(r);
+  else if (r.sourceType === 'API') bExcluded.cex++;
+  else if (r.sourceType === 'Manual') bExcluded.manual++;
+  else if (r.sourceName === 'Ethereum') bExcluded.ethereum++;
+  else if (r.sourceName === 'Polygon') bExcluded.polygon++;
+  else if (CSV_CHAIN[r.sourceName]) bInScope.push(r);
+  else bExcluded.otherSource++;
+}
+const bByTx = new Map<string, CsvRow[]>();
+for (const r of bInScope) {
+  if (r.txId === '') continue;
+  const k = `${CSV_CHAIN[r.sourceName]}:${r.txId}`;
+  bByTx.set(k, [...(bByTx.get(k) ?? []), r]);
+}
+
+// pair legs inside (dir, asset) groups on txs covered by both — same mechanics
+// as source A.
+const pairedLegsB: PairedLeg[] = [];
+let bCoveredTxs = 0;
+for (const [k, txRows] of bByTx) {
+  const txEvents = evByTx.get(k);
+  if (!txEvents) continue;
+  bCoveredTxs++;
+  const chain = CSV_CHAIN[txRows[0].sourceName];
+  const txHash = k.slice(k.indexOf(':') + 1);
+  const groups = buildGroups(chain, txEvents, txRows);
+  for (const [gk, cg] of groups.csv) {
+    const eg = groups.ev.get(gk);
+    if (!eg) continue;
+    const evLegsSorted = [...eg.legs].sort((a, b) => b.raw - a.raw);
+    const csvLegsSorted = [...cg.legs].sort((a, b) => b.amount - a.amount);
+    const n = Math.min(evLegsSorted.length, csvLegsSorted.length);
+    for (let i = 0; i < n; i++) {
+      pairedLegsB.push({
+        chain,
+        txHash,
+        symbol: cg.symbol,
+        dir: cg.dir,
+        theirLabel: csvLegsSorted[i].row.label,
+        ourKey: `${evLegsSorted[i].type}:${evLegsSorted[i].subtype}`,
+        comment: csvLegsSorted[i].row.comment,
+      });
+    }
+    void gk;
+  }
+}
+
+// Raw-export leg labels, used to discriminate disagreement causes: if B's
+// label for a leg equals the RAW export's label for the same (tx, dir, asset),
+// the correction pipeline never touched that leg — it is an uncorrected
+// RESIDUAL Blockpit misclassification, not a deliberate correction that
+// contradicts us.
+const aLegLabels = new Map<string, Set<string>>();
+for (const [k, txRows] of csvByTx) {
+  for (const r of txRows) {
+    if (r.outAsset !== '')
+      aLegLabels.set(
+        `${k}|out|${groupOf(r.outAsset).toUpperCase()}`,
+        (aLegLabels.get(`${k}|out|${groupOf(r.outAsset).toUpperCase()}`) ?? new Set()).add(r.label),
+      );
+    if (r.inAsset !== '')
+      aLegLabels.set(
+        `${k}|in|${groupOf(r.inAsset).toUpperCase()}`,
+        (aLegLabels.get(`${k}|in|${groupOf(r.inAsset).toUpperCase()}`) ?? new Set()).add(r.label),
+      );
+  }
+}
+
+const matrixB = new Map<string, number>();
+let agreeB = 0;
+let fallbackB = 0;
+let disagreeB = 0;
+interface DisagreeBucketB {
+  count: number;
+  residual: number; // B label == raw label → pipeline never corrected this leg
+  deliberate: number; // B label != raw label → a correction that contradicts us
+  examples: string[];
+  comments: Map<string, number>;
+}
+const disagreeExamplesB = new Map<string, DisagreeBucketB>();
+for (const m of pairedLegsB) {
+  const mk = `${m.ourKey}|${m.dir}|${m.theirLabel}`;
+  matrixB.set(mk, (matrixB.get(mk) ?? 0) + 1);
+  const expected = EXPECTED_LABELS_CORRECTED[`${m.ourKey}:${m.dir}`] ?? [];
+  if (expected.includes(m.theirLabel)) {
+    agreeB++;
+  } else if (
+    m.ourKey === 'swap:trade' &&
+    (m.theirLabel === 'Deposit' || m.theirLabel === 'Withdrawal') &&
+    /fallback/i.test(m.comment)
+  ) {
+    fallbackB++; // un-fixed Blockpit fallback rows that survived into B
+  } else {
+    disagreeB++;
+    const key = `${m.ourKey} (${m.dir}) vs '${m.theirLabel}'`;
+    const b =
+      disagreeExamplesB.get(key) ??
+      ({
+        count: 0,
+        residual: 0,
+        deliberate: 0,
+        examples: [],
+        comments: new Map(),
+      } as DisagreeBucketB);
+    b.count++;
+    const rawLabels = aLegLabels.get(
+      `${m.chain}:${m.txHash}|${m.dir}|${groupOf(m.symbol).toUpperCase()}`,
+    );
+    if (rawLabels?.has(m.theirLabel)) b.residual++;
+    else b.deliberate++;
+    if (b.examples.length < 3) b.examples.push(`${m.txHash} (${m.symbol})`);
+    const c = m.comment === '' ? '(none)' : m.comment;
+    b.comments.set(c, (b.comments.get(c) ?? 0) + 1);
+    disagreeExamplesB.set(key, b);
+  }
+}
+
+// coverage context vs B (informational — the official coverage metric is
+// source A; B deliberately removes and synthesizes rows).
+const dbVsB = {
+  covered: bCoveredTxs,
+  removedByCorrection: 0,
+  gasOnly: 0,
+  outsideRange: 0,
+  other: 0,
+};
+const removedByCorrectionExamples: string[] = [];
+for (const [k, txEvents] of evByTx) {
+  if (bByTx.has(k)) continue;
+  const ts = txEvents[0].ts;
+  if (csvByTx.has(k)) {
+    dbVsB.removedByCorrection++;
+    if (removedByCorrectionExamples.length < 3)
+      removedByCorrectionExamples.push(k.slice(k.indexOf(':') + 1));
+  } else if (txEvents.every((e) => e.type === 'gas')) dbVsB.gasOnly++;
+  else if (ts < csvTsMin - 120 || ts > csvTsMax + 120) dbVsB.outsideRange++;
+  else dbVsB.other++;
+}
+let bMissingFromDbTxs = 0;
+for (const k of bByTx.keys()) {
+  if (!evByTx.has(k) && !protocolExcludedTxs.has(k)) bMissingFromDbTxs++;
+}
+
 // --- amount agreement sample of 50 -------------------------------------------
 
 const allPairs = [...matchedGroups].sort((a, b) =>
@@ -844,9 +1052,7 @@ p(`Misses by bucket:`);
 p();
 for (const [key, b] of [...csvMisses.entries()].sort((a, b) => b[1].count - a[1].count)) {
   const [chain, bucket] = key.split('|');
-  p(
-    `- **${chain} — ${bucket}**: ${b.count} txs / ${b.rows} rows (labels: ${fmtLabels(b.labels)})`,
-  );
+  p(`- **${chain} — ${bucket}**: ${b.count} txs / ${b.rows} rows (labels: ${fmtLabels(b.labels)})`);
   p(`  - examples: ${b.examples.map((e) => `\`${e}\``).join(', ')}`);
 }
 p();
@@ -934,12 +1140,65 @@ for (const [key, n] of [...matrix.entries()].sort((a, b) => b[1] - a[1])) {
   p(`| ${ourKey} | ${dir} | ${label} | ${n} |`);
 }
 p();
+p(`## Classification agreement vs SOURCE B (corrected pipeline output — source of truth)`);
+p();
+p(`- corrected CSV: \`${CORRECTED_PATH}\` — ${bRowsAll.length} data rows`);
+p(
+  `- known-synthetic injected rows (Trx. ID \`lp-…\`, LP basis carry-forward legs, no on-chain tx): ${bSynthetic.length}`,
+);
+p(
+  `- excluded (same scope rules as A): CEX ${bExcluded.cex}, Ethereum ${bExcluded.ethereum}, Polygon ${bExcluded.polygon}, Manual ${bExcluded.manual}, other ${bExcluded.otherSource}`,
+);
+p(
+  `- in-scope corrected txs: ${bByTx.size}; matched against DB events: ${bCoveredTxs}; corrected txs with no DB events (mostly same gaps as source A): ${bMissingFromDbTxs}`,
+);
+p(
+  `- DB event txs absent from B: removed-by-correction (Sickle/NPM rows replaced by synthetic position rows): ${dbVsB.removedByCorrection} (e.g. ${removedByCorrectionExamples.map((e) => `\`${e}\``).join(', ')}); gas-only: ${dbVsB.gasOnly}; outside range: ${dbVsB.outsideRange}; other: ${dbVsB.other}`,
+);
+p();
+p(`Paired legs: ${pairedLegsB.length}`);
+p();
+p(
+  `- **agree** (their corrected label ∈ expected set): ${agreeB} (${pct(agreeB, pairedLegsB.length)})`,
+);
+p(`- their-fallback (un-fixed Blockpit fallback swap rows that survived into B): ${fallbackB}`);
+p(`- **disagree**: ${disagreeB} (${pct(disagreeB, pairedLegsB.length)})`);
+p();
+if (disagreeExamplesB.size > 0) {
+  p(
+    `Disagreements (residual = B label identical to raw export, i.e. their pipeline never corrected the leg; deliberate = their correction actively chose this label):`,
+  );
+  p();
+  for (const [key, b] of [...disagreeExamplesB.entries()].sort((a, c) => c[1].count - a[1].count)) {
+    const comments = [...b.comments.entries()]
+      .sort((a, c) => c[1] - a[1])
+      .slice(0, 4)
+      .map(([cm, n]) => `${cm}×${n}`)
+      .join(', ');
+    p(
+      `- ${key}: ${b.count} (residual ${b.residual} / deliberate ${b.deliberate}; comments: ${comments})`,
+    );
+    p(`  - examples: ${b.examples.map((e) => `\`${e}\``).join(', ')}`);
+  }
+  p();
+}
+p(`Full matrix vs B (our type:subtype × their corrected Label):`);
+p();
+p(`| ours | dir | their label | count |`);
+p(`|---|---|---|---|`);
+for (const [key, n] of [...matrixB.entries()].sort((a, b) => b[1] - a[1])) {
+  const [ourKey, dir, label] = key.split('|');
+  p(`| ${ourKey} | ${dir} | ${label} | ${n} |`);
+}
+p();
 p(`## Amount agreement — deterministic sample of ${sample.length} matched flow groups`);
 p();
 const diffs = sample.map((s) => s.relDiff);
 const mean = diffs.reduce((a, b) => a + b, 0) / Math.max(1, diffs.length);
 p(`- within ${REL_TOL * 100}% tolerance: ${sampleOk.length}/${sample.length}`);
-p(`- mean relative diff: ${(mean * 100).toFixed(4)}%; max: ${(Math.max(0, ...diffs) * 100).toFixed(4)}%`);
+p(
+  `- mean relative diff: ${(mean * 100).toFixed(4)}%; max: ${(Math.max(0, ...diffs) * 100).toFixed(4)}%`,
+);
 if (sampleOutliers.length > 0) {
   p(`- outliers:`);
   for (const s of sampleOutliers)
@@ -987,7 +1246,9 @@ for (const [cat, gs] of [...mismatchByCat.entries()].sort((a, b) => b[1].length 
 p();
 p(`## Gas-fee agreement (CSV fee columns vs our gas:fee events, per tx)`);
 p();
-p(`- txs with a fee on both sides: ${gasBoth}; agree within ${REL_TOL * 100}%: ${gasOk} (${pct(gasOk, gasBoth)})`);
+p(
+  `- txs with a fee on both sides: ${gasBoth}; agree within ${REL_TOL * 100}%: ${gasOk} (${pct(gasOk, gasBoth)})`,
+);
 if (gasOutliers.length > 0) p(`- example mismatches: ${gasOutliers.join('; ')}`);
 p();
 
