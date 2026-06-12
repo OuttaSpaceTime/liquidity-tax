@@ -70,6 +70,12 @@ export const TOKEN_TO_COINGECKO_ID: Readonly<Record<string, string>> = {
   '27G8MtK7VtTcCHkpASjSDdkWWYfoqT6ggEuKidVJidD4': 'jupiter-perpetuals-liquidity-provider-token', // JLP
   '3ThdFZQKM6kRyVGLG48kaPg5TRMhYMKY1iCRa9xop1WC': 'solstice-eusx', // eUSX
   '6FrrzDk5mQARGc1TDYoyVnSyRdds1t4PbtohCD6p3tgG': 'usx', // Solstice USX
+  // Verified via /coins/solana/contract/{mint} (2026-06-12 integration run)
+  Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB: 'tether', // USDT (legacy Solana mint)
+  jupSoLaHXQiZZTSfEWMTRRgpnyFm8f6sZdosWBjx93v: 'jupiter-staked-sol', // jupSOL — accruing LST
+  '4sWNB8zGWHkh6UnmwiEtzNxL4XrN7uK9tosbESbJFfVs': 'hylo-leveraged-sol', // xSOL (Hylo)
+  '5YMkXAYccHSGnHn9nob9xEvv6Pvka9DZWH7nTbotTu9E': 'hylo-usd', // hyUSD (Hylo)
+  '8Jx8AAHj86wbQgUTjGuj6GTTL5Ps3cqxKRTvpaJApump': 'nietzschean-penguin', // PENGUIN (pump.fun)
   // Base ERC-20 addresses (lowercase, as emitted)
   '0x50c5725949a6f0c72e6c4a641f24049a917db0cb': 'dai', // DAI
   '0x60a3e35cc302bfa44cb288bc5a4f316fdb1adb42': 'euro-coin', // EURC
