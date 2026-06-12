@@ -169,9 +169,13 @@ export abstract class UniV3LikeHandler implements Handler {
     const groups = this.groupByTokenId(logs);
     const txFrom = rawJson.tx.from.toLowerCase();
 
+    // ONE transfer-claiming set per receipt (not per tokenId group): the
+    // transfers span the whole receipt, so a per-group set would let two
+    // groups with an identical leg value claim the same Transfer log twice.
+    const claimed = new Set<number>();
     const events: TaxEvent[] = [];
     for (const group of groups) {
-      const result = this.decodeGroup(raw, group, transfers, txFrom);
+      const result = this.decodeGroup(raw, group, transfers, txFrom, claimed);
       if (typeof result === 'string') return result;
       events.push(...result);
     }
@@ -188,10 +192,10 @@ export abstract class UniV3LikeHandler implements Handler {
     group: NpmGroup,
     transfers: Erc20Transfer[],
     txFrom: string,
+    claimed: Set<number>,
   ): TaxEvent[] | string {
     const events: TaxEvent[] = [];
     const positionId = this.positionId(group.tokenId);
-    const claimed = new Set<number>();
 
     // --- IncreaseLiquidity → lp_deposit (token transfers go INTO the pool)
     for (const log of group.increases) {
@@ -201,8 +205,14 @@ export abstract class UniV3LikeHandler implements Handler {
         return `${this.id}: cannot resolve token addresses for IncreaseLiquidity at log ${log.logIndex}`;
       }
       const subtype = group.minted !== undefined ? 'open_position' : 'add_liquidity';
+      // Actor of a no-mint increase: the address that FUNDED the deposit legs
+      // (the matched transfers' sender — a Sickle proxy or the EOA itself),
+      // never tx.from. A keeper-triggered Sickle compound has tx.from = the
+      // vfat keeper; attributing the lp_deposit there would silently drop the
+      // re-deposit basis from the owner's position lifecycle (review finding).
+      const funder = tokens.transfer0?.from ?? tokens.transfer1?.from;
       const wallet = this.resolveWallet(
-        group.minted !== undefined ? topicAddress(group.minted.topics[2]!) : txFrom,
+        group.minted !== undefined ? topicAddress(group.minted.topics[2]!) : (funder ?? txFrom),
       );
       for (const leg of nonzeroLegs(amounts, tokens)) {
         events.push({
@@ -455,14 +465,23 @@ function sumAmounts(logs: ParsedLog[]): LegAmounts {
  * token1, which also disambiguates the equal-amounts case). Both matched
  * transfers must share the same counterparty (`side`: the pool — `to` for
  * deposits, `from` for payouts). Zero legs need no transfer; returns
- * undefined when a nonzero leg has no matching transfer.
+ * undefined when a nonzero leg has no matching transfer. The matched
+ * transfers are returned alongside the tokens so callers can derive the
+ * economic actor (e.g. the deposit funder) from them.
  */
 function matchTransferPair(
   transfers: Erc20Transfer[],
   amounts: LegAmounts,
   claimed: Set<number>,
   side: (t: Erc20Transfer) => string,
-): { token0: string | undefined; token1: string | undefined } | undefined {
+):
+  | {
+      token0: string | undefined;
+      token1: string | undefined;
+      transfer0: Erc20Transfer | undefined;
+      transfer1: Erc20Transfer | undefined;
+    }
+  | undefined {
   const take = (value: bigint, counterparty: string | undefined): Erc20Transfer | undefined => {
     const match = transfers.find(
       (t) =>
@@ -484,7 +503,7 @@ function matchTransferPair(
     t1 = take(amounts.amount1, t0 === undefined ? undefined : side(t0));
     if (t1 === undefined) return undefined;
   }
-  return { token0: t0?.token, token1: t1?.token };
+  return { token0: t0?.token, token1: t1?.token, transfer0: t0, transfer1: t1 };
 }
 
 /** Nonzero token legs in canonical order: token0 (seq 0) then token1. */

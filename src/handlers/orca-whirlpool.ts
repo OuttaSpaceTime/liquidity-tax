@@ -104,17 +104,30 @@ interface RawJsonShape {
   } | null;
 }
 
-/** One SPL transfer/transferChecked CPI leg, mint-resolved. */
+/** One SPL transfer/transferChecked[WithFee] CPI leg, mint-resolved. */
 interface TransferLeg {
   mint: string;
+  /** Gross amount debited from `source`. */
   amount: bigint;
+  /**
+   * Token-2022 transfer fee withheld at `destination`
+   * (`transferCheckedWithFee` legs; 0 otherwise): the receiver is credited
+   * `amount - fee`, the sender is debited the full `amount`.
+   */
+  fee: bigint;
   source: string;
   destination: string;
+}
+
+/** Net amount arriving at the leg's destination. */
+function legReceived(leg: TransferLeg): bigint {
+  return leg.amount - leg.fee;
 }
 
 interface ParsedTransferInfoShape {
   amount?: string;
   tokenAmount?: { amount?: string };
+  feeAmount?: { amount?: string };
   mint?: string;
   source?: string;
   destination?: string;
@@ -164,8 +177,13 @@ function cpiChildren(flat: readonly FlatInstruction[], ix: WhirlpoolIxRef): Flat
 
 /**
  * SPL transfer legs among an instruction's CPI children, in inner-transfer
- * order (token A before token B). Returns an error string when a V1 leg's
- * mint cannot be resolved.
+ * order (token A before token B). Token-2022 mints with the transfer-fee
+ * extension emit `transferCheckedWithFee` legs (Agave jsonParsed: amount at
+ * info.tokenAmount, withheld fee at info.feeAmount) — skipping those would
+ * silently drop the corresponding lp_deposit/lp_withdraw/lp_fee event
+ * (review finding). Burn/mintTo/closeAccount children under open/close
+ * instructions are legitimately skipped. Returns an error string when a V1
+ * leg's mint or a withFee leg's fee cannot be resolved.
  */
 function transferLegs(
   children: readonly FlatInstruction[],
@@ -175,16 +193,20 @@ function transferLegs(
   for (const child of children) {
     if (!TOKEN_PROGRAM_IDS.has(child.programId)) continue;
     const parsed = child.parsed as { type?: string; info?: ParsedTransferInfoShape } | undefined;
-    if (parsed?.type !== 'transfer' && parsed?.type !== 'transferChecked') continue;
-    const info = parsed.info ?? {};
-    const amountRaw = parsed.type === 'transferChecked' ? info.tokenAmount?.amount : info.amount;
+    const type = parsed?.type;
+    if (type !== 'transfer' && type !== 'transferChecked' && type !== 'transferCheckedWithFee') {
+      continue;
+    }
+    const info = parsed?.info ?? {};
+    const amountRaw = type === 'transfer' ? info.amount : info.tokenAmount?.amount;
+    const feeRaw = type === 'transferCheckedWithFee' ? info.feeAmount?.amount : '0';
     const source = info.source ?? '';
     const destination = info.destination ?? '';
     const mint = info.mint ?? mintByAccount.get(source) ?? mintByAccount.get(destination);
-    if (amountRaw === undefined || mint === undefined) {
+    if (amountRaw === undefined || feeRaw === undefined || mint === undefined) {
       return `unresolvable spl transfer leg at flat index ${child.flatIndex}`;
     }
-    legs.push({ mint, amount: BigInt(amountRaw), source, destination });
+    legs.push({ mint, amount: BigInt(amountRaw), fee: BigInt(feeRaw), source, destination });
   }
   return legs;
 }
@@ -206,9 +228,11 @@ function netSwapLegs(
   const received = new Map<string, bigint>();
   for (const leg of legs) {
     if (vaults.has(leg.destination)) {
+      // User pays gross; the transfer fee (if any) is withheld vault-side.
       sent.set(leg.mint, (sent.get(leg.mint) ?? 0n) + leg.amount);
     } else if (vaults.has(leg.source)) {
-      received.set(leg.mint, (received.get(leg.mint) ?? 0n) + leg.amount);
+      // User receives net of any token-2022 transfer fee.
+      received.set(leg.mint, (received.get(leg.mint) ?? 0n) + legReceived(leg));
     }
     // Legs touching no vault (e.g. token-2022 transfer-fee skims) are ignored.
   }
@@ -286,9 +310,28 @@ export const orcaWhirlpoolHandler: Handler = {
         continue;
       }
       // Zero-amount legs are skipped and do not consume an emissionSeq ordinal.
+      // Sent sides move the gross debit; received sides what actually arrives
+      // (net of any token-2022 transfer fee).
       const legs = legsOrError.filter((leg) => leg.amount > 0n);
+      const receivedLegs = legsOrError.filter((leg) => legReceived(leg) > 0n);
       const positionId = positionIdOf(ix);
       const at = { logIndex: ix.flatIndex, positionId };
+
+      // A real increase/decrease/collect always CPIs at least one token
+      // transfer (zero-amount transfers included — pinned by fixtures #6-#8).
+      // Zero legs found ⇒ the children were lost (e.g. legacy payloads with
+      // stackHeight null flattening to the wrong depth) — manual queue, never
+      // a silent no-emit (review finding).
+      if (
+        legsOrError.length === 0 &&
+        (INCREASE_NAMES.has(ix.name) ||
+          DECREASE_NAMES.has(ix.name) ||
+          COLLECT_FEES_NAMES.has(ix.name) ||
+          COLLECT_REWARD_NAMES.has(ix.name))
+      ) {
+        problems.push(`${ix.name} at flat index ${ix.flatIndex} has no SPL transfer CPI legs`);
+        continue;
+      }
 
       if (OPEN_NAMES.has(ix.name)) {
         // Lifecycle marker only — the position NFT mint and rent are not principal.
@@ -321,7 +364,7 @@ export const orcaWhirlpoolHandler: Handler = {
           });
         });
       } else if (DECREASE_NAMES.has(ix.name)) {
-        legs.forEach((leg, seq) => {
+        receivedLegs.forEach((leg, seq) => {
           events.push({
             ...base,
             ...at,
@@ -329,11 +372,11 @@ export const orcaWhirlpoolHandler: Handler = {
             subtype: 'remove_liquidity',
             emissionSeq: seq,
             receivedAsset: leg.mint,
-            receivedAmount: leg.amount,
+            receivedAmount: legReceived(leg),
           });
         });
       } else if (COLLECT_FEES_NAMES.has(ix.name)) {
-        legs.forEach((leg, seq) => {
+        receivedLegs.forEach((leg, seq) => {
           events.push({
             ...base,
             ...at,
@@ -341,12 +384,12 @@ export const orcaWhirlpoolHandler: Handler = {
             subtype: 'collect',
             emissionSeq: seq,
             receivedAsset: leg.mint,
-            receivedAmount: leg.amount,
+            receivedAmount: legReceived(leg),
           });
         });
       } else if (COLLECT_REWARD_NAMES.has(ix.name)) {
         // Zero-amount reward transfers (emissions inactive) emit nothing.
-        legs.forEach((leg, seq) => {
+        receivedLegs.forEach((leg, seq) => {
           events.push({
             ...base,
             ...at,
@@ -354,7 +397,7 @@ export const orcaWhirlpoolHandler: Handler = {
             subtype: 'emission_claim',
             emissionSeq: seq,
             receivedAsset: leg.mint,
-            receivedAmount: leg.amount,
+            receivedAmount: legReceived(leg),
           });
         });
       } else if (ix.name in SWAP_VAULT_INDEXES) {

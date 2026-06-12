@@ -370,7 +370,14 @@ describe('DecoderRegistry — unclassified fallback', () => {
     expect(result.reason).toContain('unknown navi event type FlashLoanX');
   });
 
-  it('prefers decoded over unclassified when another handler emits events', () => {
+  it('routes the whole tx to the manual queue when any handler reports a problem, even if another decoded events', () => {
+    // Review finding: the Sui handlers (navi/suilend/turbos) implement an
+    // all-or-nothing contract — a single problem discards that handler's own
+    // events. If the registry then marked the tx 'decoded' because ANOTHER
+    // handler emitted events (e.g. turbos decoding the swap of a PTB whose
+    // Navi legs tripped a guard), the dropped legs would silently understate
+    // taxable activity with no trace. Conservative rule: any unclassified
+    // reason sends the WHOLE tx to the manual queue.
     const registry = newRegistry();
     registry.registerHandler(
       makeHandler({ id: 'confused', result: { kind: 'unclassified', reason: 'no idea' } }),
@@ -382,7 +389,11 @@ describe('DecoderRegistry — unclassified fallback', () => {
       }),
     );
 
-    expect(registry.decode(makeRawTx()).status).toBe('decoded');
+    const result = registry.decode(makeRawTx());
+    expect(result.status).toBe('unclassified');
+    if (result.status !== 'unclassified') throw new Error('unreachable');
+    expect(result.reason).toContain('confused');
+    expect(result.reason).toContain('no idea');
   });
 });
 

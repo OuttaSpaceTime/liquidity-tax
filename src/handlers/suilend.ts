@@ -523,6 +523,32 @@ export const suilendHandler: Handler = {
       }
     }
 
+    // Owned PTB containing a swap-shaped event this handler does not
+    // recognize (mirrors navi.ts's unrecognized-swap guard, review finding):
+    // returning kind:'ok' with only the lend legs would mark the tx 'decoded'
+    // and silently drop a §23-relevant disposal routed through a venue with a
+    // different summary event (direct Cetus swap, unknown aggregator, a
+    // redeployed settle package). When a RECOGNIZED route summary (7K router
+    // / settle::Swap) is present, per-pool hop legs (Cetus/Bluefin/Momentum/
+    // FlowX — cross-01, suilend-03) are that route's internals and stay
+    // ignored. Residual gap, accepted: a second, unrecognized venue swapping
+    // in the same PTB as a recognized route.
+    const hasRecognizedRoute =
+      settleSwaps.length > 0 || sevenKSwaps.length > 0 || sevenKConfirm !== undefined;
+    if (!hasRecognizedRoute) {
+      for (const [index, rawEvent] of rawEvents.entries()) {
+        const type = rawEvent.type;
+        if (type === undefined || isSuilendEventType(type)) continue;
+        const structName = type.split('<')[0]!.split('::').pop() ?? '';
+        if (/swap/i.test(structName)) {
+          problems.push(
+            `unrecognized swap leg '${type.split('<')[0]}' at event index ${index} in an owned ` +
+              'PTB — foreign-protocol disposal, label manually (no Cetus/generic Sui swap handler yet)',
+          );
+        }
+      }
+    }
+
     // Partial decodes must not silently understate taxable activity.
     if (problems.length > 0) return { kind: 'unclassified', reason: problems.join('; ') };
     if (out.length === 0) return { kind: 'skip' };

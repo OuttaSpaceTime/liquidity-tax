@@ -166,6 +166,41 @@ describe('aerodrome handler — ownership gates (review regressions)', () => {
       expect(result.reason).toContain('owner');
     }
   });
+
+  test('keeper-triggered Sickle add_liquidity attributes the lp_deposit to the OWNER, never the keeper', () => {
+    // Review finding: with tx.from = keeper and a dust sweep Sickle→owner in
+    // the same receipt (which defeats the no-owner-anywhere guard above), the
+    // no-mint IncreaseLiquidity leg was attributed to the keeper EOA — the
+    // re-deposit basis silently left the owner's position lifecycle. Variant
+    // of the REAL aerodrome-01 zap (no keeper-sender tx exists in history).
+    const fixture = loadFixture('aerodrome-01-sickle-zap-add-liquidity.json');
+    const owner = fixture.walletsContext[0]!;
+    const sickle = fixture.raw.addresses.find((a) => a !== owner)!;
+    const keeper = '0x00000000000000000000000000000000000ca11e';
+    fixture.raw.tx.from = keeper;
+    fixture.raw.tx.value = '0x0'; // keeper calls carry no owner ETH (drops the raw-ETH vfat fee leg)
+    // Dust sweep Sickle→owner (1 wei WETH): suppressed as internal, but it
+    // makes the owner resolvable from the transfers — the exact scenario that
+    // defeated the keeper guard.
+    fixture.raw.receipt.logs.push({
+      address: '0x4200000000000000000000000000000000000006',
+      topics: [TRANSFER_TOPIC, pad32(sickle), pad32(owner)],
+      data: '0x0000000000000000000000000000000000000000000000000000000000000001',
+      logIndex: '0x7fe',
+    });
+
+    const result = decodeFixture(fixture);
+    expect(result.status).toBe('decoded');
+    if (result.status !== 'decoded') return;
+
+    const deposits = result.events.filter((e) => e.type === 'lp_deposit');
+    expect(deposits).toHaveLength(2); // WETH + USDC legs, as in the original fixture
+    for (const event of result.events) {
+      expect(event.wallet).toBe(owner);
+    }
+    // The owner-funded raw-ETH vfat fee must NOT be fabricated for a keeper call.
+    expect(result.events.some((e) => e.sentAsset === 'ETH' && e.flags !== undefined)).toBe(false);
+  });
 });
 
 describe('aerodrome handler — position tracker integration (src/positions)', () => {

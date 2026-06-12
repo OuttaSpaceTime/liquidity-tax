@@ -217,6 +217,13 @@ export const turbosHandler: Handler = {
     const burnedNfts = new Set<string>();
     for (const event of events) {
       const key = event.type === undefined ? undefined : TYPE_TO_KEY.get(event.type);
+      if (key === 'mintNftV1') {
+        // v1-era open marker: the payload carries `object_id` (== the NFT
+        // address, see TurbosMintNFTEventV1), not `nft_address`.
+        const payload = event.parsedJson as { object_id?: string };
+        if (payload.object_id !== undefined) mintedNfts.add(payload.object_id);
+        continue;
+      }
       if (key !== 'mintNft' && key !== 'burnNft' && key !== 'burnPosition') continue;
       const payload = event.parsedJson as { nft_address?: string };
       if (payload.nft_address === undefined) continue;
@@ -429,7 +436,8 @@ export const turbosHandler: Handler = {
           break;
         }
         // Ownerless position_manager duplicates of the pool events above, NFT
-        // link markers (consumed in pass 1), and non-tax admin events.
+        // link markers (mintNft/burnNft/burnPosition/mintNftV1 — consumed in
+        // pass 1), and non-tax admin events.
         case 'increaseLiquidity':
         case 'decreaseLiquidity':
         case 'pmCollect':

@@ -126,12 +126,20 @@ export class DecoderRegistry {
     assertNoDuplicateEmissions(finalEvents);
     sortDeterministically(finalEvents);
 
+    // Any handler-reported problem sends the WHOLE tx to the manual queue,
+    // even when other handlers decoded events: the handlers implement an
+    // all-or-nothing contract (a problem discards their own events), so
+    // marking the tx 'decoded' on another handler's partial view would
+    // silently understate taxable activity with no trace (review finding —
+    // e.g. a Sui PTB whose swap turbos decodes while navi's guard trips).
+    if (unclassifiedReasons.length > 0) {
+      return { status: 'unclassified', reason: unclassifiedReasons.join('; ') };
+    }
     if (finalEvents.length > 0) return { status: 'decoded', events: finalEvents };
     if (anySkip) return { status: 'skipped' };
     return {
       status: 'unclassified',
-      reason:
-        unclassifiedReasons.join('; ') || 'no handler matched and no generic rule emitted events',
+      reason: 'no handler matched and no generic rule emitted events',
     };
   }
 

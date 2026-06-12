@@ -38,6 +38,8 @@ interface SuiFixture {
   walletsContext: string[];
   blockNumber: number;
   raw: { timestampMs?: string | null } & Record<string, unknown>;
+  /** Decode outcome; defaults to 'decoded'. 'unclassified' = manual queue (suilend-04). */
+  expectedStatus?: 'decoded' | 'unclassified';
   expectedEvents: FixtureEvent[];
 }
 
@@ -118,7 +120,7 @@ describe('suilend handler [1C.5]', () => {
     const fixture = loadFixture(file);
     it(`${file} (${fixture.scenario}${fixture.foreign ? ', foreign' : ''}): decodes to the hand-labeled TaxEvent[]`, () => {
       const result = makeRegistry(fixture.walletsContext).decode(toRawTx(fixture));
-      expect(result.status).toBe('decoded');
+      expect(result.status).toBe(fixture.expectedStatus ?? 'decoded');
       if (result.status !== 'decoded') return;
       expect(result.events.map(comparable)).toEqual(
         fixture.expectedEvents.map(expectedComparable),
@@ -229,5 +231,36 @@ describe('suilend — ctoken conversion without a rate snapshot (review regressi
     if (result.kind === 'unclassified') {
       expect(result.reason).toContain('exchange rate');
     }
+  });
+});
+
+describe('suilend — unrecognized swap legs in an owned PTB (review regression)', () => {
+  it('routes an owned PTB with a swap event from an unrecognized venue to the manual queue', () => {
+    // Review finding: unlike navi, suilend silently ignored foreign swap
+    // events — an owned Suilend PTB disposing coins through a venue with a
+    // different summary event (direct Cetus swap, unknown aggregator) decoded
+    // kind:'ok' with only the lend legs, dropping the §23-relevant disposal.
+    // Variant of REAL fixture suilend-01 with a Cetus pool::SwapEvent (real
+    // type string from suilend-04) appended; no recognized route summary is
+    // present, so the disposal cannot be attributed to any decoded trade.
+    const fixture = loadFixture('suilend-01-borrow-claim-redeposit.json');
+    (fixture.raw.events as unknown[]).push({
+      type: '0x1eabed72c53feb3805120a081dc15963c204dc8d091542592abaf7a35689b2fb::pool::SwapEvent',
+      parsedJson: { pool: '0x1', amount_in: '1000000', amount_out: '900000', atob: true },
+    });
+
+    const result = makeRegistry(fixture.walletsContext).decode(toRawTx(fixture));
+    expect(result.status).toBe('unclassified');
+    if (result.status === 'unclassified') {
+      expect(result.reason).toContain('pool::SwapEvent');
+    }
+  });
+
+  it('still decodes owned PTBs whose per-pool swap legs belong to a RECOGNIZED route summary (suilend-03)', () => {
+    // suilend-03 carries Cetus/Bluefin per-hop legs under a settle::Swap
+    // total — those are the route's internals, not unrecognized disposals.
+    const fixture = loadFixture('suilend-03-flash-repay-redeposit.json');
+    const result = makeRegistry(fixture.walletsContext).decode(toRawTx(fixture));
+    expect(result.status).toBe('decoded');
   });
 });

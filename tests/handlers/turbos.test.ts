@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { DecoderRegistry } from '../../src/decoder';
 import type { RawTx } from '../../src/decoder/types';
 import { turbosHandler } from '../../src/handlers/turbos';
+import { TURBOS_EVENT_TYPES } from '../../src/types/turbos-events';
 import { groupEventsByPosition, reducePositionEvents } from '../../src/positions';
 import type { TaxEvent } from '../../src/types/event';
 import { createTestDb } from '../helpers/db';
@@ -208,6 +209,31 @@ describe('turbos position tracker integration', () => {
       expect(snapshot).toBeDefined();
       const warnings = snapshot?.state.warnings ?? [];
       expect(warnings.filter((w) => w.startsWith('unexpected_event_type'))).toEqual([]);
+    }
+  });
+});
+
+describe('turbos — v1-era NFT mint marker (review regression)', () => {
+  it('decodes a pool MintEvent paired with a v1 position_nft::MintNFTEvent as open_position', () => {
+    // Review finding: pass 1 consumed only mintNft/burnNft/burnPosition, so a
+    // 2023/24-era open (v1 MintNFTEvent, payload key `object_id` == the NFT
+    // address) decoded as add_liquidity and the tracker fell back to an
+    // inferred open. Variant of REAL fixture turbos-04 with the v1 marker
+    // appended for the same NFT.
+    // Deep-clone: the module-level fixtures array is shared across tests.
+    const fixture = structuredClone(fixtures.find((f) => f.file.startsWith('turbos-04'))!.fixture);
+    const nft = '0x08b7ed6f7109b7edb4a8de77bcdb17a16302bec022f9368e2ec00185dea864d4';
+    (fixture.raw.events as unknown[]).push({
+      type: TURBOS_EVENT_TYPES.mintNftV1,
+      parsedJson: { object_id: nft, creator: fixture.walletsContext[0], name: 'Turbos Position' },
+    });
+
+    const events = decodeFixture(fixture);
+    const deposits = events.filter((e) => e.type === 'lp_deposit');
+    expect(deposits.length).toBeGreaterThan(0);
+    for (const deposit of deposits) {
+      expect(deposit.subtype).toBe('open_position');
+      expect(deposit.positionId).toBe(`sui:turbos:${nft}`);
     }
   });
 });

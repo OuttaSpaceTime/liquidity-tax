@@ -424,6 +424,43 @@ describe('DecoderRegistry.decodeAndPersist — unclassified table', () => {
     expect(eventCount(sqlite, 'base', '0xlater')).toBe(1);
   });
 
+  it('keeps the unclassified row when one handler decodes but another reports a problem', () => {
+    // Review finding: a multi-handler tx (e.g. a Sui PTB) where handler B hits
+    // its conservative all-or-nothing guard must NOT be marked decoded by
+    // handler A's events — and an existing unclassified row must never be
+    // deleted while any handler still reports a problem for the tx.
+    const { db, sqlite } = createTestDb();
+    insertRawTx(db, makeRawTx({ txHash: '0xpartial' }));
+
+    // First pass: only the confused handler exists — tx lands in the queue.
+    const v1 = new DecoderRegistry(db);
+    v1.registerHandler(
+      makeHandler({ id: 'confused', result: { kind: 'unclassified', reason: 'guard tripped' } }),
+    );
+    v1.decodeAndPersist('base', '0xpartial');
+    expect(db.select().from(unclassified).all()).toHaveLength(1);
+
+    // Second pass: a second handler now decodes part of the tx, but the
+    // confused handler still reports its problem.
+    const v2 = new DecoderRegistry(db);
+    v2.registerHandler(
+      makeHandler({ id: 'confused', result: { kind: 'unclassified', reason: 'guard tripped' } }),
+    );
+    v2.registerHandler(
+      makeHandler({
+        id: 'confident',
+        result: { kind: 'ok', events: [makeEvent({ handlerId: 'confident', txHash: '0xpartial' })] },
+      }),
+    );
+    const result = v2.decodeAndPersist('base', '0xpartial');
+
+    expect(result.status).toBe('unclassified');
+    const rows = db.select().from(unclassified).all();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].reason).toContain('guard tripped');
+    expect(eventCount(sqlite, 'base', '0xpartial')).toBe(0);
+  });
+
   it('skipped txs write neither events nor unclassified rows', () => {
     const { db, sqlite } = createTestDb();
     insertRawTx(db, makeRawTx({ txHash: '0xspam' }));

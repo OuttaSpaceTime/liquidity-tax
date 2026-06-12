@@ -448,18 +448,35 @@ export async function enumerateViaLogs(
   return [...byHash.values()];
 }
 
+/** Sickle's `owner()` getter — selector of `SickleStorage.owner` (public address). */
+const SICKLE_OWNER_SELECTOR = '0x8da5cb5b';
+
+/** Last 20 bytes of a 32-byte eth_call return word as a lowercase address, or null. */
+function callResultToAddress(result: unknown): string | null {
+  if (typeof result !== 'string' || result.length !== 66) return null;
+  const address = `0x${result.slice(-40)}`.toLowerCase();
+  return address === ZERO_ADDRESS ? null : address;
+}
+
 /**
- * Probe transfer counterparties for vfat Sickle proxies (EIP-1167 to a known
- * implementation). Returns lowercased Sickle addresses.
+ * Probe transfer counterparties for vfat Sickle proxies: the bytecode must be
+ * an EIP-1167 minimal proxy to a known implementation AND the proxy's
+ * `owner()` (SickleStorage public getter, selector 0x8da5cb5b — verified in
+ * the deployed implementation's source/bytecode on Basescan/Blockscout) must
+ * be one of the configured owner wallets. Bytecode alone is NOT enough: a
+ * third party's Sickle that ever appears as a transfer counterparty shares
+ * the implementation, and enumerating it would ingest its whole history and
+ * attribute its LP income to us (review finding). Returns lowercased,
+ * ownership-verified Sickle addresses.
  */
 export async function discoverSickles(
   request: RpcRequestFn,
   counterparties: ReadonlySet<string>,
-  knownAddresses: ReadonlySet<string>,
+  owners: ReadonlySet<string>,
 ): Promise<string[]> {
   const candidates = new Set<string>();
   for (const addr of counterparties) {
-    if (addr === ZERO_ADDRESS || knownAddresses.has(addr)) continue;
+    if (addr === ZERO_ADDRESS || owners.has(addr)) continue;
     candidates.add(addr);
   }
   const sickles: string[] = [];
@@ -473,7 +490,27 @@ export async function discoverSickles(
       if (sickleImplementationOf(codes[i] as string) !== null) sickles.push(batch[i]!);
     }
   }
-  return sickles;
+  // Ownership check, one eth_call per bytecode-verified candidate. An
+  // unreadable owner() (revert/empty) excludes the proxy — conservative:
+  // never enumerate an address we cannot prove is ours.
+  const verified: string[] = [];
+  for (const batch of chunk(sickles, FETCH_CONCURRENCY)) {
+    const results = await Promise.all(
+      batch.map((addr) =>
+        withBackoff(() =>
+          request({
+            method: 'eth_call',
+            params: [{ to: addr, data: SICKLE_OWNER_SELECTOR }, 'latest'],
+          }),
+        ),
+      ),
+    );
+    for (let i = 0; i < batch.length; i += 1) {
+      const owner = callResultToAddress(results[i]);
+      if (owner !== null && owners.has(owner)) verified.push(batch[i]!);
+    }
+  }
+  return verified;
 }
 
 // ---------------------------------------------------------------------------

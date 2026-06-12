@@ -268,3 +268,89 @@ describe('orca whirlpool position tracker integration', () => {
     }
   });
 });
+
+describe('orca whirlpool — token-2022 transfer-fee CPI legs (review regressions)', () => {
+  interface MutableParsedIx {
+    parsed?: {
+      type?: string;
+      info?: {
+        tokenAmount?: { amount?: string; decimals?: number };
+        feeAmount?: { amount?: string; decimals?: number };
+        mint?: string;
+      };
+    };
+    [key: string]: unknown;
+  }
+  interface MutableMeta {
+    meta: { innerInstructions: Array<{ index: number; instructions: MutableParsedIx[] }> };
+  }
+
+  /** Rewrite the transferChecked leg moving `amount` into transferCheckedWithFee (fee withheld at destination). */
+  function addTransferFee(raw: RawTx, amount: string, fee: string): void {
+    let rewritten = 0;
+    for (const entry of (raw.rawJson as unknown as MutableMeta).meta.innerInstructions) {
+      for (const ix of entry.instructions) {
+        const info = ix.parsed?.info;
+        if (ix.parsed?.type === 'transferChecked' && info?.tokenAmount?.amount === amount) {
+          ix.parsed.type = 'transferCheckedWithFee';
+          info.feeAmount = { amount: fee, decimals: info.tokenAmount.decimals };
+          rewritten += 1;
+        }
+      }
+    }
+    expect(rewritten).toBe(1);
+  }
+
+  it('credits the NET amount (gross − fee) for a collectFeesV2 leg on a transfer-fee mint', () => {
+    // Variant of REAL fixture #5 (full close V2): the token-2022 hSOL fee leg
+    // becomes a transferCheckedWithFee, as a transfer-fee-extension mint would
+    // emit. The leg must not be silently skipped (review finding), and the
+    // income at receipt is what actually arrives: gross − withheld fee.
+    const fixture = golden.fixtures.find((f) => f.txHash.startsWith('2ETDRYW'))!;
+    const raw = loadRawTx(fixture.txHash);
+    addTransferFee(raw, '821263105', '1263105');
+
+    const result = makeRegistry([fixture.wallet]).decode(raw);
+    expect(result.status).toBe('decoded');
+    if (result.status !== 'decoded') return;
+    const expected = fixture.expectedEvents.map(expectedComparable).map((e) =>
+      e.type === 'lp_fee' && e.receivedAmount === 821263105n
+        ? { ...e, receivedAmount: 821263105n - 1263105n }
+        : e,
+    );
+    expect(result.events.map(comparable)).toEqual(expected);
+  });
+
+  it('debits the GROSS amount for an increaseLiquidityV2 deposit leg on a transfer-fee mint', () => {
+    // Variant of REAL fixture #1 (open + increaseV2 single-sided): the wallet
+    // is debited the gross amount; the fee is withheld on the vault side.
+    const fixture = golden.fixtures.find((f) => f.txHash.startsWith('wYcczFGa'))!;
+    const raw = loadRawTx(fixture.txHash);
+    addTransferFee(raw, '2660524176533', '24176533');
+
+    const result = makeRegistry([fixture.wallet]).decode(raw);
+    expect(result.status).toBe('decoded');
+    if (result.status !== 'decoded') return;
+    expect(result.events.map(comparable)).toEqual(fixture.expectedEvents.map(expectedComparable));
+  });
+
+  it('routes a liquidity instruction with ZERO transfer CPI legs to the manual queue, never a silent no-emit', () => {
+    // Review finding: legacy payloads (stackHeight null) can flatten CPI legs
+    // to the wrong depth, leaving increase/decrease/collect with zero legs —
+    // a real one always CPIs at least one token transfer (zero-amount
+    // included). Variant of REAL fixture #2 with the increase's inner
+    // instruction group removed.
+    const fixture = golden.fixtures.find((f) => f.txHash.startsWith('zhDAa6'))!;
+    const raw = loadRawTx(fixture.txHash);
+    const meta = (raw.rawJson as unknown as MutableMeta).meta;
+    const before = meta.innerInstructions.length;
+    meta.innerInstructions = meta.innerInstructions.filter((entry) => entry.index !== 5);
+    expect(meta.innerInstructions.length).toBe(before - 1);
+
+    const result = makeRegistry([fixture.wallet]).decode(raw);
+    expect(result.status).toBe('unclassified');
+    if (result.status === 'unclassified') {
+      expect(result.reason).toContain('IncreaseLiquidity');
+    }
+  });
+});

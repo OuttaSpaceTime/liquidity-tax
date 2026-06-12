@@ -226,6 +226,58 @@ describe('sickleImplementationOf', () => {
 });
 
 // ---------------------------------------------------------------------------
+// discoverSickles — bytecode shape AND ownership must both verify
+// ---------------------------------------------------------------------------
+
+describe('discoverSickles', () => {
+  // A third party's Sickle (same verified bytecode, foreign owner) that ever
+  // appears as a transfer counterparty must NOT be enumerated as ours —
+  // review finding: bytecode-only verification would ingest its entire
+  // history and attribute its LP income to the owner.
+  const FOREIGN_SICKLE = '0x4444444444444444444444444444444444444444';
+
+  test('keeps only proxies whose owner() is a configured wallet', async () => {
+    const calls: string[] = [];
+    const request: RpcRequestFn = (args) => {
+      if (args.method === 'eth_getCode') {
+        const [address] = args.params as [string, string];
+        return Promise.resolve(
+          [SICKLE, FOREIGN_SICKLE].includes(address) ? SICKLE_PROXY_CODE : '0x',
+        );
+      }
+      if (args.method === 'eth_call') {
+        const [call] = args.params as [{ to: string; data: string }, string];
+        calls.push(call.to);
+        expect(call.data).toBe('0x8da5cb5b'); // owner() — SickleStorage public getter
+        return Promise.resolve(pad32(call.to === SICKLE ? OWNER : OTHER));
+      }
+      throw new Error(`unexpected method ${args.method}`);
+    };
+
+    const { discoverSickles } = await import('../../../src/chains/base/ingest');
+    const sickles = await discoverSickles(
+      request,
+      new Set([SICKLE, FOREIGN_SICKLE, OTHER]),
+      new Set([OWNER]),
+    );
+    expect(sickles).toEqual([SICKLE]);
+    // Ownership was actually probed for both bytecode-verified candidates.
+    expect(calls.sort()).toEqual([SICKLE, FOREIGN_SICKLE].sort());
+  });
+
+  test('excludes a Sickle whose owner() call fails to return an address', async () => {
+    const request: RpcRequestFn = (args) => {
+      if (args.method === 'eth_getCode') return Promise.resolve(SICKLE_PROXY_CODE);
+      if (args.method === 'eth_call') return Promise.resolve('0x');
+      throw new Error(`unexpected method ${args.method}`);
+    };
+    const { discoverSickles } = await import('../../../src/chains/base/ingest');
+    const sickles = await discoverSickles(request, new Set([SICKLE]), new Set([OWNER]));
+    expect(sickles).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // enumerateAssetTransfers — both directions, all categories, pagination
 // ---------------------------------------------------------------------------
 
@@ -455,6 +507,14 @@ function makeFakeRpc(): { request: RpcRequestFn; calls: Map<string, number> } {
     if (args.method === 'eth_getCode') {
       const [address] = args.params as [string, string];
       return Promise.resolve(address.toLowerCase() === SICKLE ? SICKLE_PROXY_CODE : '0x');
+    }
+    if (args.method === 'eth_call') {
+      // Sickle ownership probe: owner() returns the configured wallet.
+      const [call] = args.params as [{ to: string; data: string }, string];
+      if (call.data === '0x8da5cb5b' && call.to.toLowerCase() === SICKLE) {
+        return Promise.resolve(pad32(OWNER));
+      }
+      return Promise.resolve('0x');
     }
     const blockOf = (hash: string): string =>
       [...Object.values(transfersByTarget)].flat().find((t) => t.hash === hash)?.blockNum ?? '0x64';
