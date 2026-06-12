@@ -2,8 +2,8 @@ import { address, createSolanaRpc, signature } from '@solana/kit';
 import { requireEnv } from '../../config/env';
 import type { Wallet } from '../../config/wallets-loader';
 import type { Db } from '../../db/client';
-import { upsertEvents, type EventInsert } from '../../db/repos/events';
-import { listRawTxKeys, upsertRawTxs, type RawTxInsert } from '../../db/repos/raw-txs';
+import { listRawTxKeys } from '../../db/repos/raw-txs';
+import { createIngestBuffer, createThrottle, defaultSleep, withRetry } from '../ingest-utils';
 import type { IngestAdapter, IngestOptions, IngestResult } from '../registry';
 
 /**
@@ -75,8 +75,6 @@ export interface SolanaIngestDeps {
 const HELIUS_MAINNET = 'https://mainnet.helius-rpc.com/';
 const SOLANA_RPC_PAGE_LIMIT = 1000;
 
-const defaultSleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
-
 /** Lamports per tx fee fit easily in a number, but slots/amounts may not — keep bigints lossless. */
 export function toJsonSafe(value: unknown): unknown {
   if (typeof value === 'bigint') {
@@ -89,17 +87,6 @@ export function toJsonSafe(value: unknown): unknown {
     return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, toJsonSafe(v)]));
   }
   return value;
-}
-
-function isRetryableError(error: unknown): boolean {
-  const statusCode = (error as { context?: { statusCode?: number } } | null)?.context?.statusCode;
-  if (statusCode === 429 || statusCode === 502 || statusCode === 503 || statusCode === 504) {
-    return true;
-  }
-  const message = error instanceof Error ? error.message : String(error);
-  return /429|too many requests|rate limit|timeout|timed out|econnreset|fetch failed|502|503|504/i.test(
-    message,
-  );
 }
 
 /** Default RPC: Helius mainnet, key resolved from env only when ingest actually runs. */
@@ -151,25 +138,9 @@ export function createSolanaIngestAdapter(deps: SolanaIngestDeps = {}): IngestAd
   const log = deps.log ?? ((line: string) => console.log(line));
 
   // Simple client-side rate limiter for the Helius free tier.
-  let nextAllowedAt = 0;
-  const throttle = async (): Promise<void> => {
-    if (minRequestIntervalMs <= 0) return;
-    const current = Date.now();
-    const waitMs = nextAllowedAt - current;
-    nextAllowedAt = Math.max(current, nextAllowedAt) + minRequestIntervalMs;
-    if (waitMs > 0) await sleep(waitMs);
-  };
-
-  const withRetry = async <T>(fn: () => Promise<T>): Promise<T> => {
-    for (let attempt = 0; ; attempt += 1) {
-      try {
-        return await fn();
-      } catch (error) {
-        if (attempt >= maxRetries || !isRetryableError(error)) throw error;
-        await sleep(retryBaseMs * 2 ** attempt);
-      }
-    }
-  };
+  const throttle = createThrottle(minRequestIntervalMs, sleep);
+  const retry = <T>(fn: () => Promise<T>): Promise<T> =>
+    withRetry(fn, { maxRetries, baseMs: retryBaseMs, sleep });
 
   return {
     chain: 'solana',
@@ -180,18 +151,7 @@ export function createSolanaIngestAdapter(deps: SolanaIngestDeps = {}): IngestAd
       const known = new Set(listRawTxKeys(db, 'solana').map((row) => row.txHash));
 
       let fetched = 0;
-      let upserted = 0;
-
-      let rawBuffer: RawTxInsert[] = [];
-      let eventBuffer: EventInsert[] = [];
-      const flush = (): void => {
-        if (rawBuffer.length === 0) return;
-        upsertRawTxs(db, rawBuffer);
-        upsertEvents(db, eventBuffer);
-        upserted += rawBuffer.length;
-        rawBuffer = [];
-        eventBuffer = [];
-      };
+      const buffer = createIngestBuffer(db);
 
       const ownWallets = new Set(wallets.map((w) => w.address));
 
@@ -202,7 +162,7 @@ export function createSolanaIngestAdapter(deps: SolanaIngestDeps = {}): IngestAd
           let before: string | undefined;
           for (;;) {
             await throttle();
-            const page = await withRetry(() =>
+            const page = await retry(() =>
               rpc.getSignaturesForAddress(wallet.address, { limit: pageSize, before }).send(),
             );
             let reachedSince = false;
@@ -228,7 +188,7 @@ export function createSolanaIngestAdapter(deps: SolanaIngestDeps = {}): IngestAd
           let done = 0;
           for (const info of missing) {
             await throttle();
-            const tx = (await withRetry(() =>
+            const tx = (await retry(() =>
               rpc
                 .getTransaction(info.signature, {
                   encoding: 'jsonParsed',
@@ -243,7 +203,7 @@ export function createSolanaIngestAdapter(deps: SolanaIngestDeps = {}): IngestAd
             }
 
             const blockTimestamp = Number(tx.blockTime ?? info.blockTime ?? 0);
-            rawBuffer.push({
+            buffer.pushRaw({
               chain: 'solana',
               txHash: info.signature,
               blockNumber: Number(tx.slot ?? info.slot),
@@ -257,7 +217,7 @@ export function createSolanaIngestAdapter(deps: SolanaIngestDeps = {}): IngestAd
             const feePayer = feePayerOf(tx);
             const fee = tx.meta?.fee;
             if (feePayer !== undefined && fee !== undefined && ownWallets.has(feePayer)) {
-              eventBuffer.push({
+              buffer.pushEvent({
                 chain: 'solana',
                 txHash: info.signature,
                 logIndex: -1, // sentinel: ingest-time gas row, outside instruction index space
@@ -273,21 +233,21 @@ export function createSolanaIngestAdapter(deps: SolanaIngestDeps = {}): IngestAd
               });
             }
 
-            if (rawBuffer.length >= flushEvery) {
-              flush();
+            if (buffer.pendingRaw() >= flushEvery) {
+              buffer.flush();
               if (done % 200 === 0) {
                 log(`solana ingest [${wallet.label}]: ${done}/${missing.length} txs fetched`);
               }
             }
           }
-          flush();
+          buffer.flush();
         }
       } finally {
         // Persist whatever was fetched before an error — rerun resumes after it.
-        flush();
+        buffer.flush();
       }
 
-      return { fetched, upserted };
+      return { fetched, upserted: buffer.upserted() };
     },
   };
 }

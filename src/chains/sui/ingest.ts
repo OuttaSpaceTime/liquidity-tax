@@ -2,8 +2,8 @@ import { SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
 import { requireEnv } from '../../config/env';
 import type { Wallet } from '../../config/wallets-loader';
 import type { Db } from '../../db/client';
-import { upsertEvents, type EventInsert } from '../../db/repos/events';
-import { listRawTxKeys, upsertRawTxs, type RawTxInsert } from '../../db/repos/raw-txs';
+import { listRawTxKeys } from '../../db/repos/raw-txs';
+import { createIngestBuffer, createThrottle, defaultSleep, withRetry } from '../ingest-utils';
 import type { IngestAdapter, IngestOptions, IngestResult } from '../registry';
 
 /**
@@ -101,17 +101,6 @@ const TX_BLOCK_OPTIONS = {
   showInput: true,
 } as const;
 
-const defaultSleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
-
-function isRetryableError(error: unknown): boolean {
-  const status = (error as { status?: number } | null)?.status;
-  if (status === 429 || status === 502 || status === 503 || status === 504) return true;
-  const message = error instanceof Error ? error.message : String(error);
-  return /429|too many requests|rate limit|timeout|timed out|econnreset|fetch failed|502|503|504/i.test(
-    message,
-  );
-}
-
 /** Default RPC: `SUI_RPC_URL` fullnode, resolved from env only when ingest actually runs. */
 function createSuiRpc(): SuiRpcLike {
   const client = new SuiJsonRpcClient({ url: requireEnv('SUI_RPC_URL'), network: 'mainnet' });
@@ -168,25 +157,9 @@ export function createSuiIngestAdapter(deps: SuiIngestDeps = {}): IngestAdapter 
   const log = deps.log ?? ((line: string) => console.log(line));
 
   // Client-side request floor — public fullnodes rate-limit aggressively.
-  let nextAllowedAt = 0;
-  const throttle = async (): Promise<void> => {
-    if (minRequestIntervalMs <= 0) return;
-    const current = Date.now();
-    const waitMs = nextAllowedAt - current;
-    nextAllowedAt = Math.max(current, nextAllowedAt) + minRequestIntervalMs;
-    if (waitMs > 0) await sleep(waitMs);
-  };
-
-  const withRetry = async <T>(fn: () => Promise<T>): Promise<T> => {
-    for (let attempt = 0; ; attempt += 1) {
-      try {
-        return await fn();
-      } catch (error) {
-        if (attempt >= maxRetries || !isRetryableError(error)) throw error;
-        await sleep(retryBaseMs * 2 ** attempt);
-      }
-    }
-  };
+  const throttle = createThrottle(minRequestIntervalMs, sleep);
+  const retry = <T>(fn: () => Promise<T>): Promise<T> =>
+    withRetry(fn, { maxRetries, baseMs: retryBaseMs, sleep });
 
   return {
     chain: 'sui',
@@ -197,17 +170,7 @@ export function createSuiIngestAdapter(deps: SuiIngestDeps = {}): IngestAdapter 
       const known = new Set(listRawTxKeys(db, 'sui').map((row) => row.txHash));
       const sinceMs = opts.since === undefined ? undefined : opts.since * 1000;
 
-      let upserted = 0;
-      let rawBuffer: RawTxInsert[] = [];
-      let eventBuffer: EventInsert[] = [];
-      const flush = (): void => {
-        if (rawBuffer.length === 0) return;
-        upsertRawTxs(db, rawBuffer);
-        upsertEvents(db, eventBuffer);
-        upserted += rawBuffer.length;
-        rawBuffer = [];
-        eventBuffer = [];
-      };
+      const buffer = createIngestBuffer(db);
 
       const ownWallets = new Set(wallets.map((w) => w.address));
       let fetched = 0;
@@ -225,7 +188,7 @@ export function createSuiIngestAdapter(deps: SuiIngestDeps = {}): IngestAdapter 
             let cursor: string | null | undefined;
             for (;;) {
               await throttle();
-              const page = await withRetry(() =>
+              const page = await retry(() =>
                 rpc.queryTransactionBlocks({
                   filter,
                   cursor,
@@ -261,7 +224,7 @@ export function createSuiIngestAdapter(deps: SuiIngestDeps = {}): IngestAdapter 
           let done = 0;
           for (const entry of missing) {
             await throttle();
-            const tx = (await withRetry(() =>
+            const tx = (await retry(() =>
               rpc.getTransactionBlock({ digest: entry.digest, options: TX_BLOCK_OPTIONS }),
             )) as SuiTxShape | null;
             done += 1;
@@ -272,7 +235,7 @@ export function createSuiIngestAdapter(deps: SuiIngestDeps = {}): IngestAdapter 
 
             const timestampMs = Number(tx.timestampMs ?? entry.timestampMs ?? 0);
             const blockTimestamp = Math.floor(timestampMs / 1000);
-            rawBuffer.push({
+            buffer.pushRaw({
               chain: 'sui',
               txHash: entry.digest,
               blockNumber: Number(tx.checkpoint ?? 0),
@@ -286,7 +249,7 @@ export function createSuiIngestAdapter(deps: SuiIngestDeps = {}): IngestAdapter 
             const sender = tx.transaction?.data?.sender;
             const fee = netGasMist(tx);
             if (sender !== undefined && fee !== undefined && ownWallets.has(sender)) {
-              eventBuffer.push({
+              buffer.pushEvent({
                 chain: 'sui',
                 txHash: entry.digest,
                 logIndex: -1, // sentinel: ingest-time gas row, outside event index space
@@ -304,22 +267,22 @@ export function createSuiIngestAdapter(deps: SuiIngestDeps = {}): IngestAdapter 
               });
             }
 
-            if (rawBuffer.length >= flushEvery) {
-              flush();
+            if (buffer.pendingRaw() >= flushEvery) {
+              buffer.flush();
               if (done % 100 === 0) {
                 log(`sui ingest [${wallet.label}]: ${done}/${missing.length} txs fetched`);
               }
             }
           }
-          flush();
+          buffer.flush();
         }
       } finally {
         // Persist whatever was fetched before an error — rerun resumes after it.
-        flush();
+        buffer.flush();
       }
 
       // fetched = unique digests enumerated per wallet (both passes deduped).
-      return { fetched, upserted };
+      return { fetched, upserted: buffer.upserted() };
     },
   };
 }
