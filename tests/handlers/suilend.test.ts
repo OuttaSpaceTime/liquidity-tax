@@ -1,11 +1,16 @@
 import { describe, expect, it } from 'bun:test';
-import { readdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { DecoderRegistry } from '../../src/decoder';
 import type { RawTx } from '../../src/decoder/types';
 import { suilendHandler } from '../../src/handlers/suilend';
 import type { TaxEvent } from '../../src/types/event';
 import { createTestDb } from '../helpers/db';
+import {
+  SUI_FIXTURES_DIR,
+  listFixtureFiles,
+  loadSuiFixture,
+  suiFixtureToRawTx,
+  type FixtureEvent,
+} from '../helpers/fixtures';
 
 /**
  * [1C.5] Suilend handler tests, driven by the [1C.6] hand-labeled golden
@@ -18,50 +23,11 @@ import { createTestDb } from '../helpers/db';
  * wiring — same pattern as tests/handlers/orca-whirlpool.test.ts.
  */
 
-const FIXTURES_DIR = join(import.meta.dir, '../fixtures/sui');
-
-type FixtureEvent = Omit<
-  TaxEvent,
-  'sentAmount' | 'receivedAmount' | 'handlerVersion' | 'priceUsd'
-> & {
-  sentAmount?: string;
-  receivedAmount?: string;
-};
-
-interface SuiFixture {
-  chain: 'sui';
-  protocol: string;
-  scenario: string;
-  txHash: string;
-  foreign: boolean;
-  notes: string;
-  walletsContext: string[];
-  blockNumber: number;
-  raw: { timestampMs?: string | null } & Record<string, unknown>;
-  /** Decode outcome; defaults to 'decoded'. 'unclassified' = manual queue (suilend-04). */
-  expectedStatus?: 'decoded' | 'unclassified';
-  expectedEvents: FixtureEvent[];
-}
 
 /** Every fixture whose hand-labeled events belong to the suilend handler. */
-const files = readdirSync(FIXTURES_DIR)
-  .filter((f) => f.startsWith('suilend-') || f.startsWith('cross-01'))
-  .sort();
-
-function loadFixture(file: string): SuiFixture {
-  return JSON.parse(readFileSync(join(FIXTURES_DIR, file), 'utf8')) as SuiFixture;
-}
-
-function toRawTx(fixture: SuiFixture): RawTx {
-  return {
-    chain: 'sui',
-    txHash: fixture.txHash,
-    blockNumber: fixture.blockNumber,
-    blockTimestamp: Math.floor(Number(fixture.raw.timestampMs ?? 0) / 1000),
-    rawJson: fixture.raw,
-    fetchedAt: 0,
-  };
-}
+const files = listFixtureFiles(SUI_FIXTURES_DIR).filter(
+  (f) => f.startsWith('suilend-') || f.startsWith('cross-01'),
+);
 
 function makeRegistry(wallets: readonly string[]): DecoderRegistry {
   const { db } = createTestDb();
@@ -112,14 +78,14 @@ describe('suilend handler [1C.5]', () => {
 
   it('matches every suilend golden fixture tx', () => {
     for (const file of files) {
-      expect(suilendHandler.matches(toRawTx(loadFixture(file)))).toBe(true);
+      expect(suilendHandler.matches(suiFixtureToRawTx(loadSuiFixture(file)))).toBe(true);
     }
   });
 
   for (const file of files) {
-    const fixture = loadFixture(file);
+    const fixture = loadSuiFixture(file);
     it(`${file} (${fixture.scenario}${fixture.foreign ? ', foreign' : ''}): decodes to the hand-labeled TaxEvent[]`, () => {
-      const result = makeRegistry(fixture.walletsContext).decode(toRawTx(fixture));
+      const result = makeRegistry(fixture.walletsContext).decode(suiFixtureToRawTx(fixture));
       expect(result.status).toBe(fixture.expectedStatus ?? 'decoded');
       if (result.status !== 'decoded') return;
       expect(result.events.map(comparable)).toEqual(
@@ -134,8 +100,8 @@ describe('suilend handler [1C.5]', () => {
   }
 
   it('skips a Suilend tx where no configured wallet is the sender', () => {
-    const fixture = loadFixture(files[0]!);
-    const raw = toRawTx(fixture);
+    const fixture = loadSuiFixture(files[0]!);
+    const raw = suiFixtureToRawTx(fixture);
     expect(suilendHandler.matches(raw)).toBe(true);
     const result = makeRegistry([
       '0x000000000000000000000000000000000000000000000000000000000000dead',
@@ -144,9 +110,9 @@ describe('suilend handler [1C.5]', () => {
   });
 
   it('does not match a non-Suilend sui tx', () => {
-    const turbos = readdirSync(FIXTURES_DIR).find((f) => f.startsWith('turbos-01'));
+    const turbos = listFixtureFiles(SUI_FIXTURES_DIR, 'turbos-01')[0];
     expect(turbos).toBeDefined();
-    expect(suilendHandler.matches(toRawTx(loadFixture(turbos!)))).toBe(false);
+    expect(suilendHandler.matches(suiFixtureToRawTx(loadSuiFixture(turbos!)))).toBe(false);
   });
 });
 
@@ -243,13 +209,13 @@ describe('suilend — unrecognized swap legs in an owned PTB (review regression)
     // Variant of REAL fixture suilend-01 with a Cetus pool::SwapEvent (real
     // type string from suilend-04) appended; no recognized route summary is
     // present, so the disposal cannot be attributed to any decoded trade.
-    const fixture = loadFixture('suilend-01-borrow-claim-redeposit.json');
+    const fixture = loadSuiFixture('suilend-01-borrow-claim-redeposit.json');
     (fixture.raw.events as unknown[]).push({
       type: '0x1eabed72c53feb3805120a081dc15963c204dc8d091542592abaf7a35689b2fb::pool::SwapEvent',
       parsedJson: { pool: '0x1', amount_in: '1000000', amount_out: '900000', atob: true },
     });
 
-    const result = makeRegistry(fixture.walletsContext).decode(toRawTx(fixture));
+    const result = makeRegistry(fixture.walletsContext).decode(suiFixtureToRawTx(fixture));
     expect(result.status).toBe('unclassified');
     if (result.status === 'unclassified') {
       expect(result.reason).toContain('pool::SwapEvent');
@@ -259,8 +225,8 @@ describe('suilend — unrecognized swap legs in an owned PTB (review regression)
   it('still decodes owned PTBs whose per-pool swap legs belong to a RECOGNIZED route summary (suilend-03)', () => {
     // suilend-03 carries Cetus/Bluefin per-hop legs under a settle::Swap
     // total — those are the route's internals, not unrecognized disposals.
-    const fixture = loadFixture('suilend-03-flash-repay-redeposit.json');
-    const result = makeRegistry(fixture.walletsContext).decode(toRawTx(fixture));
+    const fixture = loadSuiFixture('suilend-03-flash-repay-redeposit.json');
+    const result = makeRegistry(fixture.walletsContext).decode(suiFixtureToRawTx(fixture));
     expect(result.status).toBe('decoded');
   });
 });

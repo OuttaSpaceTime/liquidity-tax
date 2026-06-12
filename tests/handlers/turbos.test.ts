@@ -1,13 +1,17 @@
 import { describe, expect, it } from 'bun:test';
-import { readdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { DecoderRegistry } from '../../src/decoder';
-import type { RawTx } from '../../src/decoder/types';
 import { turbosHandler } from '../../src/handlers/turbos';
 import { TURBOS_EVENT_TYPES } from '../../src/types/turbos-events';
 import { groupEventsByPosition, reducePositionEvents } from '../../src/positions';
 import type { TaxEvent } from '../../src/types/event';
 import { createTestDb } from '../helpers/db';
+import {
+  SUI_FIXTURES_DIR,
+  listFixtureFiles,
+  loadSuiFixture,
+  suiFixtureToRawTx,
+  type SuiFixture,
+} from '../helpers/fixtures';
 
 /**
  * [1C.3] Turbos CLMM handler tests, driven by the hand-labeled golden
@@ -19,47 +23,10 @@ import { createTestDb } from '../helpers/db';
  * red until the Integrate phase swaps `turbosStub` in createDefaultRegistry).
  */
 
-const FIXTURES_DIR = join(import.meta.dir, '../fixtures/sui');
-
-type FixtureEvent = Omit<
-  TaxEvent,
-  'sentAmount' | 'receivedAmount' | 'handlerVersion' | 'priceUsd'
-> & {
-  sentAmount?: string;
-  receivedAmount?: string;
-};
-
-interface SuiFixture {
-  chain: 'sui';
-  protocol: string;
-  scenario: string;
-  txHash: string;
-  foreign: boolean;
-  notes: string;
-  walletsContext: string[];
-  blockNumber: number;
-  raw: { timestampMs?: string | null } & Record<string, unknown>;
-  expectedEvents: FixtureEvent[];
-}
-
-const fixtures = readdirSync(FIXTURES_DIR)
-  .filter((f) => f.startsWith('turbos-') && f.endsWith('.json'))
-  .sort()
-  .map((file) => ({
-    file,
-    fixture: JSON.parse(readFileSync(join(FIXTURES_DIR, file), 'utf8')) as SuiFixture,
-  }));
-
-function toRawTx(fixture: SuiFixture): RawTx {
-  return {
-    chain: 'sui',
-    txHash: fixture.txHash,
-    blockNumber: fixture.blockNumber,
-    blockTimestamp: Math.floor(Number(fixture.raw.timestampMs ?? 0) / 1000),
-    rawJson: fixture.raw,
-    fetchedAt: 0,
-  } as RawTx;
-}
+const fixtures = listFixtureFiles(SUI_FIXTURES_DIR, 'turbos-').map((file) => ({
+  file,
+  fixture: loadSuiFixture(file),
+}));
 
 function makeRegistry(wallets: readonly string[]): DecoderRegistry {
   const { db } = createTestDb();
@@ -69,7 +36,7 @@ function makeRegistry(wallets: readonly string[]): DecoderRegistry {
 }
 
 function decodeFixture(fixture: SuiFixture): TaxEvent[] {
-  const result = makeRegistry(fixture.walletsContext).decode(toRawTx(fixture));
+  const result = makeRegistry(fixture.walletsContext).decode(suiFixtureToRawTx(fixture));
   expect(result.status).toBe('decoded');
   return result.status === 'decoded' ? result.events : [];
 }
@@ -87,7 +54,7 @@ describe('turbos handler [1C.3]', () => {
 
   it('matches every turbos fixture tx', () => {
     for (const { fixture } of fixtures) {
-      expect(turbosHandler.matches(toRawTx(fixture))).toBe(true);
+      expect(turbosHandler.matches(suiFixtureToRawTx(fixture))).toBe(true);
     }
   });
 
@@ -117,7 +84,7 @@ describe('turbos handler [1C.3]', () => {
 
   it('skips a Turbos tx where no configured wallet is involved', () => {
     const { fixture } = fixtures[0]!;
-    const raw = toRawTx(fixture);
+    const raw = suiFixtureToRawTx(fixture);
     expect(turbosHandler.matches(raw)).toBe(true);
     const result = makeRegistry(['0x' + 'f'.repeat(64)]).decode(raw);
     expect(result.status).toBe('skipped');
@@ -131,7 +98,7 @@ describe('turbos — aggregator-summary dedup across handlers (review regression
     // the settle mirror, turbos preferring the universal_router index must NOT
     // emit the same trade again — one route, one swap:trade.
     const { fixture } = fixtures.find((f) => f.file.startsWith('turbos-02'))!;
-    const raw = toRawTx(fixture);
+    const raw = suiFixtureToRawTx(fixture);
     const sender = fixture.walletsContext[0]!;
     const claimedBySuilend: TaxEvent = {
       type: 'swap',

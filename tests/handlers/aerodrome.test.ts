@@ -1,14 +1,10 @@
 import { describe, expect, test } from 'bun:test';
-import { readdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { createTestDb } from '../helpers/db';
 import { DecoderRegistry } from '../../src/decoder';
 import { rawTxs } from '../../db/schema';
 import { AerodromeHandler } from '../../src/handlers/aerodrome';
 import { groupEventsByPosition, reducePositionEvents } from '../../src/positions';
-import type { BaseRawJson } from '../../src/chains/base/raw-json';
-import type { TaxEvent } from '../../src/types/event';
+import { BASE_FIXTURES_DIR, listFixtureFiles, loadBaseFixture, type BaseFixture } from '../helpers/fixtures';
 
 /**
  * Aerodrome handler tests ([1A.4], issue #8) — golden fixtures are REAL Base
@@ -29,36 +25,7 @@ import type { TaxEvent } from '../../src/types/event';
  *      must not trip the all-legs-zero unclassified path
  */
 
-const FIXTURES_DIR = fileURLToPath(new URL('../fixtures/base/', import.meta.url));
-
-type FixtureEvent = Omit<
-  TaxEvent,
-  'sentAmount' | 'receivedAmount' | 'handlerVersion' | 'priceUsd'
-> & {
-  sentAmount?: string;
-  receivedAmount?: string;
-};
-
-interface BaseFixture {
-  chain: 'base';
-  protocol: string;
-  txHash: string;
-  foreign: boolean;
-  notes: string;
-  walletsContext: string[];
-  blockNumber: number;
-  expectedStatus?: 'decoded' | 'skipped';
-  raw: BaseRawJson;
-  expectedEvents: FixtureEvent[];
-}
-
-function loadFixture(file: string): BaseFixture {
-  return JSON.parse(readFileSync(join(FIXTURES_DIR, file), 'utf8')) as BaseFixture;
-}
-
-const files = readdirSync(FIXTURES_DIR)
-  .filter((f) => f.startsWith('aerodrome-') && f.endsWith('.json'))
-  .sort();
+const files = listFixtureFiles(BASE_FIXTURES_DIR, 'aerodrome-');
 
 /** Registry with ONLY the real aerodrome handler (default registry holds the stub until Integrate). */
 function decodeFixture(fixture: BaseFixture) {
@@ -84,7 +51,7 @@ describe('aerodrome handler — golden fixtures (real Base txs)', () => {
   });
 
   for (const file of files) {
-    const fixture = loadFixture(file);
+    const fixture = loadBaseFixture(file);
     const expectedStatus = fixture.expectedStatus ?? 'decoded';
     test(`${file}${fixture.foreign ? ' (foreign)' : ''}: decodes to the hand-labeled outcome`, () => {
       const result = decodeFixture(fixture);
@@ -111,7 +78,7 @@ describe('aerodrome handler — golden fixtures (real Base txs)', () => {
   test('does not match a non-Aerodrome tx (aave_v3 supply, uniswap_v3 NPM mint)', () => {
     const handler = new AerodromeHandler();
     for (const file of ['aave_v3-01-supply.json', 'uniswap_v3-01-open-position-mint.json']) {
-      const fixture = loadFixture(file);
+      const fixture = loadBaseFixture(file);
       const raw = {
         chain: 'base',
         txHash: fixture.txHash,
@@ -133,7 +100,7 @@ describe('aerodrome handler — ownership gates (review regressions)', () => {
   const TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
 
   test("a third party's gauge claim batched with an unrelated incoming transfer is NOT our income", () => {
-    const fixture = loadFixture('aerodrome-04-gauge-claim-direct.json');
+    const fixture = loadBaseFixture('aerodrome-04-gauge-claim-direct.json');
     const me = '0x00000000000000000000000000000000000beef1';
     const stranger = '0x00000000000000000000000000000000000feed2';
     // The original claimer stays in the receipt; we merely receive an
@@ -153,7 +120,7 @@ describe('aerodrome handler — ownership gates (review regressions)', () => {
   });
 
   test('keeper-triggered Sickle harvest with no owner leg goes to the manual queue, not to the keeper', () => {
-    const fixture = loadFixture('aerodrome-06-sickle-gauge-claim-skim.json');
+    const fixture = loadBaseFixture('aerodrome-06-sickle-gauge-claim-skim.json');
     const keeper = '0x00000000000000000000000000000000000ca11e';
     fixture.raw.tx.from = keeper;
     // Remove the Sickle→EOA net forward (log 0x166): rewards stay in the
@@ -173,7 +140,7 @@ describe('aerodrome handler — ownership gates (review regressions)', () => {
     // no-mint IncreaseLiquidity leg was attributed to the keeper EOA — the
     // re-deposit basis silently left the owner's position lifecycle. Variant
     // of the REAL aerodrome-01 zap (no keeper-sender tx exists in history).
-    const fixture = loadFixture('aerodrome-01-sickle-zap-add-liquidity.json');
+    const fixture = loadBaseFixture('aerodrome-01-sickle-zap-add-liquidity.json');
     const owner = fixture.walletsContext[0]!;
     const sickle = fixture.raw.addresses.find((a) => a !== owner)!;
     const keeper = '0x00000000000000000000000000000000000ca11e';
@@ -205,7 +172,7 @@ describe('aerodrome handler — ownership gates (review regressions)', () => {
 
 describe('aerodrome handler — position tracker integration (src/positions)', () => {
   test('rebalance fixture: closes 29372936 (principal+fees split) and opens 30347282 in one tx', () => {
-    const result = decodeFixture(loadFixture('aerodrome-02-sickle-full-rebalance.json'));
+    const result = decodeFixture(loadBaseFixture('aerodrome-02-sickle-full-rebalance.json'));
     expect(result.status).toBe('decoded');
     if (result.status !== 'decoded') return;
 

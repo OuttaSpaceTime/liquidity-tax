@@ -1,11 +1,9 @@
 import { describe, expect, test } from 'bun:test';
-import { readdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { readdirSync } from 'node:fs';
 import { createTestDb } from '../../helpers/db';
 import { createDefaultRegistry } from '../../../src/decoder';
 import { rawTxs } from '../../../db/schema';
-import type { TaxEvent } from '../../../src/types/event';
+import { SUI_FIXTURES_DIR, loadSuiFixture } from '../../helpers/fixtures';
 
 /**
  * Golden-fixture tests for the Sui protocol handlers ([1C.6]).
@@ -28,39 +26,6 @@ import type { TaxEvent } from '../../../src/types/event';
  * - `scenario` tags the gnarly case from the [1C.6] spec the fixture covers.
  */
 
-const FIXTURES_DIR = fileURLToPath(new URL('../../fixtures/sui/', import.meta.url));
-
-type FixtureEvent = Omit<
-  TaxEvent,
-  'sentAmount' | 'receivedAmount' | 'handlerVersion' | 'priceUsd'
-> & {
-  sentAmount?: string;
-  receivedAmount?: string;
-};
-
-interface SuiFixture {
-  chain: 'sui';
-  /** Primary protocol; cross-protocol PTBs list the dominant one. */
-  protocol: string;
-  /** [1C.6] scenario tag, e.g. lst_loop | navi_liquidation | turbos_rebalance | suilend_supply_claim | cross_protocol_ptb. */
-  scenario: string;
-  txHash: string;
-  /** true = real on-chain tx from another user (case absent from own history). */
-  foreign: boolean;
-  notes: string;
-  /** Addresses for DecodeContext.wallets (owner side of this tx). */
-  walletsContext: string[];
-  blockNumber: number;
-  /** Full SuiTransactionBlockResponse exactly as stored in raw_txs.raw_json. */
-  raw: { timestampMs?: string | null } & Record<string, unknown>;
-  /**
-   * Expected decode outcome; defaults to 'decoded'. 'unclassified' = the tx
-   * carries taxable legs no handler decodes yet (e.g. a foreign-protocol swap
-   * inside an owned PTB, navi-04) — manual queue, never a silent partial decode.
-   */
-  expectedStatus?: 'decoded' | 'unclassified';
-  expectedEvents: FixtureEvent[];
-}
 
 // [1C.6] asked for a haSUI loop "if present in history" — own history has none;
 // the own-wallet Navi flash-loan leverage loop with Volo vSUI (identical event
@@ -73,7 +38,7 @@ const REQUIRED_SCENARIOS = [
   'cross_protocol_ptb',
 ] as const;
 
-const files = readdirSync(FIXTURES_DIR)
+const files = readdirSync(SUI_FIXTURES_DIR)
   .filter((f) => f.endsWith('.json'))
   .sort();
 
@@ -81,7 +46,7 @@ describe('sui golden fixtures (hand-labeled real txs — RED until 1C handlers l
   test('covers all five [1C.6] scenarios', () => {
     const scenarios = new Set<string>();
     for (const file of files) {
-      const fixture = JSON.parse(readFileSync(join(FIXTURES_DIR, file), 'utf8')) as SuiFixture;
+      const fixture = loadSuiFixture(file);
       scenarios.add(fixture.scenario);
     }
     for (const required of REQUIRED_SCENARIOS) {
@@ -90,7 +55,7 @@ describe('sui golden fixtures (hand-labeled real txs — RED until 1C handlers l
   });
 
   for (const file of files) {
-    const fixture = JSON.parse(readFileSync(join(FIXTURES_DIR, file), 'utf8')) as SuiFixture;
+    const fixture = loadSuiFixture(file);
 
     test(`${file} (${fixture.protocol}/${fixture.scenario}${fixture.foreign ? ', foreign' : ''}): decodes to the hand-labeled TaxEvent[]`, () => {
       const { db } = createTestDb();

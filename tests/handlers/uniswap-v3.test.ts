@@ -1,14 +1,12 @@
 import { describe, expect, test } from 'bun:test';
-import { readdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { createTestDb } from '../helpers/db';
 import { DecoderRegistry } from '../../src/decoder';
 import { rawTxs } from '../../db/schema';
 import { UniswapV3Handler } from '../../src/handlers/uniswap-v3';
 import { groupEventsByPosition, reducePositionEvents } from '../../src/positions';
-import type { BaseRawJson } from '../../src/chains/base/raw-json';
-import type { TaxEvent } from '../../src/types/event';
+import { BASE_FIXTURES_DIR, listFixtureFiles, loadBaseFixture, type BaseFixture } from '../helpers/fixtures';
 
 /**
  * Uniswap V3 handler tests ([1A.3], issue #7) — golden fixtures are REAL Base
@@ -19,35 +17,7 @@ import type { TaxEvent } from '../../src/types/event';
  * decrease+collect+burn (close, with a fee-only token0 leg).
  */
 
-const FIXTURES_DIR = fileURLToPath(new URL('../fixtures/base/', import.meta.url));
-
-type FixtureEvent = Omit<
-  TaxEvent,
-  'sentAmount' | 'receivedAmount' | 'handlerVersion' | 'priceUsd'
-> & {
-  sentAmount?: string;
-  receivedAmount?: string;
-};
-
-interface BaseFixture {
-  chain: 'base';
-  protocol: string;
-  txHash: string;
-  foreign: boolean;
-  notes: string;
-  walletsContext: string[];
-  blockNumber: number;
-  raw: BaseRawJson;
-  expectedEvents: FixtureEvent[];
-}
-
-function loadFixture(file: string): BaseFixture {
-  return JSON.parse(readFileSync(join(FIXTURES_DIR, file), 'utf8')) as BaseFixture;
-}
-
-const files = readdirSync(FIXTURES_DIR)
-  .filter((f) => f.startsWith('uniswap_v3-') && f.endsWith('.json'))
-  .sort();
+const files = listFixtureFiles(BASE_FIXTURES_DIR, 'uniswap_v3-');
 
 /** Registry with ONLY the real uniswap_v3 handler (default registry still holds the stub until the Integrate phase swaps it). */
 function decodeFixture(fixture: BaseFixture) {
@@ -73,7 +43,7 @@ describe('uniswap_v3 handler — golden fixtures (real Base txs)', () => {
   });
 
   for (const file of files) {
-    const fixture = loadFixture(file);
+    const fixture = loadBaseFixture(file);
     test(`${file}${fixture.foreign ? ' (foreign)' : ''}: decodes to the hand-labeled TaxEvent[]`, () => {
       const result = decodeFixture(fixture);
 
@@ -99,7 +69,7 @@ describe('uniswap_v3 handler — golden fixtures (real Base txs)', () => {
   test('does not match a non-NPM tx (aave_v3 fixture)', () => {
     const handler = new UniswapV3Handler();
     const fixture = JSON.parse(
-      readFileSync(join(FIXTURES_DIR, 'aave_v3-01-supply.json'), 'utf8'),
+      readFileSync(join(BASE_FIXTURES_DIR, 'aave_v3-01-supply.json'), 'utf8'),
     ) as BaseFixture;
     const raw = {
       chain: 'base',
@@ -115,7 +85,7 @@ describe('uniswap_v3 handler — golden fixtures (real Base txs)', () => {
 
 describe('uniswap_v3 handler — position tracker integration (src/positions)', () => {
   test('open fixture: tracker opens position 5311225 with both deposit legs', () => {
-    const result = decodeFixture(loadFixture('uniswap_v3-01-open-position-mint.json'));
+    const result = decodeFixture(loadBaseFixture('uniswap_v3-01-open-position-mint.json'));
     expect(result.status).toBe('decoded');
     if (result.status !== 'decoded') return;
 
@@ -133,7 +103,7 @@ describe('uniswap_v3 handler — position tracker integration (src/positions)', 
   });
 
   test('decrease+collect fixture: tracker splits principal (withdrawn) from fees (feesCollected)', () => {
-    const result = decodeFixture(loadFixture('uniswap_v3-02-decrease-and-collect.json'));
+    const result = decodeFixture(loadBaseFixture('uniswap_v3-02-decrease-and-collect.json'));
     expect(result.status).toBe('decoded');
     if (result.status !== 'decoded') return;
 
@@ -148,7 +118,7 @@ describe('uniswap_v3 handler — position tracker integration (src/positions)', 
   });
 
   test('close fixture: tracker closes position 5312198 in the burn tx', () => {
-    const result = decodeFixture(loadFixture('uniswap_v3-05-close-position-burn.json'));
+    const result = decodeFixture(loadBaseFixture('uniswap_v3-05-close-position-burn.json'));
     expect(result.status).toBe('decoded');
     if (result.status !== 'decoded') return;
 

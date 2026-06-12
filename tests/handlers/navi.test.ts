@@ -1,11 +1,10 @@
 import { describe, expect, it } from 'bun:test';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { DecoderRegistry } from '../../src/decoder';
 import type { RawTx } from '../../src/decoder/types';
 import { naviHandler } from '../../src/handlers/navi';
 import type { TaxEvent } from '../../src/types/event';
 import { createTestDb } from '../helpers/db';
+import { loadSuiFixture, suiFixtureToRawTx, type FixtureEvent } from '../helpers/fixtures';
 
 /**
  * [1C.4] Navi handler tests, driven by the [1C.6] hand-labeled Sui golden
@@ -16,30 +15,6 @@ import { createTestDb } from '../helpers/db';
  * stub swap happens in the Integrate phase).
  */
 
-const FIXTURE_DIR = join(import.meta.dir, '../fixtures/sui');
-
-type FixtureEvent = Omit<
-  TaxEvent,
-  'sentAmount' | 'receivedAmount' | 'handlerVersion' | 'priceUsd'
-> & {
-  sentAmount?: string;
-  receivedAmount?: string;
-};
-
-interface SuiFixture {
-  chain: 'sui';
-  protocol: string;
-  scenario: string;
-  txHash: string;
-  foreign: boolean;
-  notes: string;
-  walletsContext: string[];
-  blockNumber: number;
-  raw: { timestampMs?: string | null } & Record<string, unknown>;
-  /** Expected decode outcome; defaults to 'decoded' (see navi-04 relabel note). */
-  expectedStatus?: 'decoded' | 'unclassified';
-  expectedEvents: FixtureEvent[];
-}
 
 const NAVI_FIXTURES = [
   'navi-01-lst-flash-leverage-loop.json',
@@ -59,21 +34,6 @@ const OTHER_SUI_FIXTURES = [
   'suilend-01-borrow-claim-redeposit.json',
   'cross-01-suilend-claim-lst-redeem-swap.json',
 ];
-
-function loadFixture(file: string): SuiFixture {
-  return JSON.parse(readFileSync(join(FIXTURE_DIR, file), 'utf8')) as SuiFixture;
-}
-
-function toRawTx(fixture: SuiFixture): RawTx {
-  return {
-    chain: 'sui',
-    txHash: fixture.txHash,
-    blockNumber: fixture.blockNumber,
-    blockTimestamp: Math.floor(Number(fixture.raw.timestampMs ?? 0) / 1000),
-    rawJson: fixture.raw,
-    fetchedAt: 0,
-  };
-}
 
 function makeRegistry(wallets: readonly string[]): DecoderRegistry {
   const { db } = createTestDb();
@@ -126,20 +86,20 @@ describe('navi handler [1C.4]', () => {
 
   it('matches every navi golden fixture tx', () => {
     for (const file of NAVI_FIXTURES) {
-      expect(naviHandler.matches(toRawTx(loadFixture(file)))).toBe(true);
+      expect(naviHandler.matches(suiFixtureToRawTx(loadSuiFixture(file)))).toBe(true);
     }
   });
 
   it('does not match the turbos/suilend/cross sui fixtures', () => {
     for (const file of OTHER_SUI_FIXTURES) {
-      expect(naviHandler.matches(toRawTx(loadFixture(file)))).toBe(false);
+      expect(naviHandler.matches(suiFixtureToRawTx(loadSuiFixture(file)))).toBe(false);
     }
   });
 
   for (const file of NAVI_FIXTURES) {
-    const fixture = loadFixture(file);
+    const fixture = loadSuiFixture(file);
     it(`${file} (${fixture.scenario}${fixture.foreign ? ', foreign' : ''}): decodes to the hand-labeled outcome`, () => {
-      const result = makeRegistry(fixture.walletsContext).decode(toRawTx(fixture));
+      const result = makeRegistry(fixture.walletsContext).decode(suiFixtureToRawTx(fixture));
       expect(result.status).toBe(fixture.expectedStatus ?? 'decoded');
       if (result.status !== 'decoded') return;
 
@@ -154,8 +114,8 @@ describe('navi handler [1C.4]', () => {
 
   it('skips a Navi tx where no configured wallet is involved', () => {
     // navi-02 decoded with an unrelated wallet set: real Navi activity, not ours.
-    const fixture = loadFixture('navi-02-liquidation.json');
-    const raw = toRawTx(fixture);
+    const fixture = loadSuiFixture('navi-02-liquidation.json');
+    const raw = suiFixtureToRawTx(fixture);
     expect(naviHandler.matches(raw)).toBe(true);
     const result = makeRegistry(['0x' + 'ab'.repeat(32)]).decode(raw);
     expect(result.status).toBe('skipped');
@@ -164,8 +124,8 @@ describe('navi handler [1C.4]', () => {
   it('routes an owned liquidator side to the manual queue (unclassified, not silent)', () => {
     // Same real liquidation tx, but configured as if the BOT were our wallet:
     // liquidator-perspective decoding is out of scope, must not decode silently.
-    const fixture = loadFixture('navi-02-liquidation.json');
-    const raw = toRawTx(fixture);
+    const fixture = loadSuiFixture('navi-02-liquidation.json');
+    const raw = suiFixtureToRawTx(fixture);
     const liquidationEvent = (
       fixture.raw as { events: { type: string; parsedJson: { sender: string } }[] }
     ).events.find((e) => e.type.endsWith('::lending::LiquidationEvent'));
@@ -182,8 +142,8 @@ describe('navi — owned PTB guards (review regressions)', () => {
     // silently understate taxable activity (§7: standalone LST swaps ARE
     // disposals). Pinned via the fixture's expectedStatus too; this test
     // documents the reason text.
-    const fixture = loadFixture('navi-04-hasui-collateral-migration.json');
-    const result = makeRegistry(fixture.walletsContext).decode(toRawTx(fixture));
+    const fixture = loadSuiFixture('navi-04-hasui-collateral-migration.json');
+    const result = makeRegistry(fixture.walletsContext).decode(suiFixtureToRawTx(fixture));
     expect(result.status).toBe('unclassified');
     if (result.status === 'unclassified') {
       expect(result.reason).toContain('swap');
