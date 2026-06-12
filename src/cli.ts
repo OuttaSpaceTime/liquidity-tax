@@ -26,7 +26,9 @@ function formatCounts(rows: Array<{ chain: string; count: number }>): string {
 }
 
 const program = new Command();
-program.name('liquidity-tax').description('DeFi tax-decoder CLI (ingest → decode → export)');
+program
+  .name('liquidity-tax')
+  .description('DeFi tax-decoder CLI (ingest → decode → link → prices)');
 
 program
   .command('ingest')
