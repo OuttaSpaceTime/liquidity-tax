@@ -1,5 +1,7 @@
+import { suiCoinSymbol } from '../chains/sui/coins';
 import type { DecodeContext, DecodeResult, Handler, RawTx } from '../decoder/types';
 import type { Flag, PositionId, TaxEvent } from '../types/event';
+import { suiEvents } from './sui-common';
 import {
   TURBOS_EVENT_TYPES,
   TURBOS_PACKAGE_CURRENT,
@@ -43,8 +45,9 @@ import {
  *   add_liquidity/remove_liquidity).
  * - Pool token order (amount_a/amount_b -> coin types) comes from the Turbos
  *   Move calls' `type_arguments` (`[CoinA, CoinB, FeeType]`), keyed by the
- *   call's pool object input; asset = last `::` segment of the coin type
- *   (SUI, USDC, ...), matching the sui fixture conventions.
+ *   call's pool object input; asset = symbol via the shared Sui registry
+ *   (src/chains/sui/coins.ts: SUI, USDC, ...), matching the sui fixture
+ *   conventions.
  * - Zap/rebalance txs route their embedded swap through an aggregator
  *   (FlowX `universal_router::Swap`, 7k `settle::Swap`): the aggregator's
  *   total event becomes ONE collapsed `swap:trade` (multi-hop convention from
@@ -83,11 +86,6 @@ interface AggregatorSwapPayload {
   sender?: string;
 }
 
-interface SuiEventShape {
-  type?: string;
-  parsedJson?: unknown;
-}
-
 interface SuiMoveCallShape {
   package?: string;
   module?: string;
@@ -102,7 +100,6 @@ interface SuiInputShape {
 }
 
 interface RawJsonShape {
-  events?: readonly SuiEventShape[];
   transaction?: {
     data?: {
       sender?: string;
@@ -112,10 +109,6 @@ interface RawJsonShape {
       };
     };
   };
-}
-
-function suiEvents(raw: RawTx): readonly SuiEventShape[] {
-  return (raw.rawJson as RawJsonShape).events ?? [];
 }
 
 function ptb(raw: RawTx): {
@@ -136,12 +129,6 @@ function ptb(raw: RawTx): {
 
 function isTurbosType(type: string): boolean {
   return TURBOS_TYPE_PREFIXES.some((prefix) => type.startsWith(prefix));
-}
-
-/** "0x2::sui::SUI" / "dba3…::usdc::USDC" (TypeName, no 0x) -> "SUI" / "USDC". */
-function coinSymbol(coinType: string): string {
-  const segments = coinType.split('::');
-  return segments[segments.length - 1] ?? coinType;
 }
 
 /**
@@ -178,9 +165,14 @@ function pairLegs(
 ): { asset: string; amount: bigint }[] | string {
   const coins = poolCoins.get(pool);
   if (coins === undefined) return `no Turbos move call resolves coin types of pool ${pool}`;
+  const symbolA = suiCoinSymbol(coins[0]);
+  const symbolB = suiCoinSymbol(coins[1]);
+  if (symbolA === undefined || symbolB === undefined) {
+    return `unresolvable coin type '${symbolA === undefined ? coins[0] : coins[1]}' — extend src/chains/sui/coins.ts`;
+  }
   return [
-    { asset: coinSymbol(coins[0]), amount: BigInt(amountA) },
-    { asset: coinSymbol(coins[1]), amount: BigInt(amountB) },
+    { asset: symbolA, amount: BigInt(amountA) },
+    { asset: symbolB, amount: BigInt(amountB) },
   ].filter((leg) => leg.amount > 0n);
 }
 
@@ -192,7 +184,9 @@ export const turbosHandler: Handler = {
   /** Cheap check: any Turbos-defined event, or a Move call into a Turbos package. */
   matches(raw: RawTx): boolean {
     if (raw.chain !== 'sui') return false;
-    if (suiEvents(raw).some((event) => event.type !== undefined && isTurbosType(event.type))) {
+    if (
+      suiEvents(raw.rawJson).some((event) => event.type !== undefined && isTurbosType(event.type))
+    ) {
       return true;
     }
     return ptb(raw).moveCalls.some(
@@ -207,7 +201,7 @@ export const turbosHandler: Handler = {
     // any coins we received are phase-2 generic-transfer territory.
     if (sender === undefined || !ctx.wallets.has(sender)) return { kind: 'skip' };
 
-    const events = suiEvents(raw);
+    const events = suiEvents(raw.rawJson);
     const poolCoins = buildPoolCoins(raw);
 
     // Pass 1 — NFT lifecycle markers: which NFTs were minted/burned in THIS
@@ -310,6 +304,14 @@ export const turbosHandler: Handler = {
               claimed.receivedAmount === receivedAmount),
         );
         if (alreadyClaimed) continue;
+        const sentAsset = suiCoinSymbol(payload.coin_in?.name ?? '');
+        const receivedAsset = suiCoinSymbol(payload.coin_out?.name ?? '');
+        if (sentAsset === undefined || receivedAsset === undefined) {
+          problems.push(
+            `aggregator swap at event index ${index}: unresolvable coin type — extend src/chains/sui/coins.ts`,
+          );
+          continue;
+        }
         const flags: Flag[] | undefined = hasPositionActivity ? ['rebalance_embedded'] : undefined;
         taxEvents.push({
           ...base,
@@ -317,9 +319,9 @@ export const turbosHandler: Handler = {
           subtype: 'trade',
           logIndex: index,
           emissionSeq: 0,
-          sentAsset: coinSymbol(payload.coin_in?.name ?? ''),
+          sentAsset,
           sentAmount: BigInt(payload.amount_in ?? '0'),
-          receivedAsset: coinSymbol(payload.coin_out?.name ?? ''),
+          receivedAsset,
           receivedAmount: BigInt(payload.amount_out ?? '0'),
           ...(flags === undefined ? {} : { flags }),
         });
@@ -382,13 +384,20 @@ export const turbosHandler: Handler = {
           const payload = event.parsedJson as TurbosCollectRewardEventV2;
           const amount = BigInt(payload.amount);
           if (amount === 0n) break; // inactive emissions vault
+          const rewardAsset = suiCoinSymbol(payload.reward_type.name);
+          if (rewardAsset === undefined) {
+            problems.push(
+              `reward claim at event index ${index}: unresolvable coin type '${payload.reward_type.name}' — extend src/chains/sui/coins.ts`,
+            );
+            break;
+          }
           taxEvents.push({
             ...base,
             type: 'lp_reward',
             subtype: 'emission_claim',
             logIndex: index,
             emissionSeq: 0,
-            receivedAsset: coinSymbol(payload.reward_type.name),
+            receivedAsset: rewardAsset,
             receivedAmount: amount,
             positionId: positionIdOf(payload.owner),
           });

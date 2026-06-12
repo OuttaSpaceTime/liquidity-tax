@@ -84,7 +84,7 @@ describe('token map', () => {
 
   it('reverse-maps a CoinGecko id to all asset symbols priced by it, sorted', () => {
     expect(assetsForCoingeckoId('ethereum')).toEqual(['ETH', 'WETH']);
-    expect(assetsForCoingeckoId('bitcoin')).toEqual(['BTC', 'cbBTC']);
+    expect(assetsForCoingeckoId('bitcoin')).toEqual(['BTC', 'WBTC', 'cbBTC']);
     expect(assetsForCoingeckoId('sui')).toEqual(['SUI']);
     expect(assetsForCoingeckoId('weth')).toEqual([]); // stale CC feed id — deliberately unmapped
   });

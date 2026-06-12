@@ -23,9 +23,11 @@ export const TOKEN_TO_COINGECKO_ID: Readonly<Record<string, string>> = {
   SUI: 'sui',
   BTC: 'bitcoin',
   cbBTC: 'bitcoin', // 1:1 Coinbase-wrapped BTC
+  WBTC: 'bitcoin', // 1:1 Wormhole-wrapped BTC (Sui)
   XRP: 'ripple',
   // Stablecoins
   USDC: 'usd-coin',
+  wUSDC: 'usd-coin', // 1:1 Wormhole-wrapped USDC (Sui)
   USDT: 'tether',
   // Base / EVM
   AERO: 'aerodrome-finance',

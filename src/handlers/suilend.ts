@@ -1,5 +1,7 @@
+import { suiCoinSymbol } from '../chains/sui/coins';
 import type { DecodeContext, DecodeResult, Handler, RawTx } from '../decoder/types';
 import type { Flag, TaxEvent } from '../types/event';
+import { foreignSwapProblems, ptbSender, suiEvents } from './sui-common';
 import {
   SUILEND_EVENT_TYPES,
   SUILEND_EVENT_TYPE_SUFFIXES,
@@ -92,39 +94,6 @@ const SEVEN_K_CONFIRM_SWAP = `${SEVEN_K_PACKAGE}::router::ConfirmSwapEvent`;
 const AGGREGATOR_SETTLE_SWAP =
   '0xe8f996ea6ff38c557c253d3b93cfe2ebf393816487266786371aa4532a9229f2::settle::Swap';
 
-/**
- * Coin type (TypeName.name, no 0x prefix) → symbol, for the fixture/report
- * asset naming convention (symbols, not type strings — matches
- * `uni-v3-like-base.ts` BASE_TOKEN_SYMBOLS). Verified via suix_getCoinMetadata
- * during fixture capture. Unknown types fall back to the 0x-prefixed type.
- */
-const SUI_COIN_SYMBOLS: Readonly<Record<string, string>> = {
-  '0000000000000000000000000000000000000000000000000000000000000002::sui::SUI': 'SUI',
-  '83556891f4a0f233ce7b05cfe7f957d4020492a34f5405b2cb9377d060bef4bf::spring_sui::SPRING_SUI':
-    'sSUI',
-  'dba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC': 'USDC',
-  '375f70cf2ae4c00bf37117d0c85a2c71545e6ee05c4a5c7d282cd66a4504b068::usdt::USDT': 'USDT',
-  'deeb7a4662eec9f2f3def03fb937a663dddaa2e215b8078a284d026b7946c270::deep::DEEP': 'DEEP',
-  '356a26eb9e012a68958082340d4c4116e7f55615cf27affcff209cf0ae544f59::wal::WAL': 'WAL',
-  // Wormhole-wrapped SOL (8 dec) — Suilend wSOL reserve.
-  'b7844e289a8410e50fb3ca48d69eb9cf29e27d223ef90353fe1bd8e27ff8f3f8::coin::COIN': 'SOL',
-};
-
-function assetSymbol(coinType: SuilendTypeName): string {
-  return SUI_COIN_SYMBOLS[coinType.name] ?? `0x${coinType.name}`;
-}
-
-/** One entry of SuiTransactionBlockResponse.events. */
-interface SuiEventShape {
-  type?: string;
-  parsedJson?: unknown;
-}
-
-interface SuiRawJsonShape {
-  transaction?: { data?: { sender?: string } } | null;
-  events?: readonly SuiEventShape[] | null;
-}
-
 /** 7K router::SwapEvent / router::ConfirmSwapEvent payload (cross-01). */
 interface SevenKSwapPayload {
   amount_in: string;
@@ -199,15 +168,13 @@ export const suilendHandler: Handler = {
   chain: 'sui',
 
   matches(raw: RawTx): boolean {
-    const events = (raw.rawJson as SuiRawJsonShape | null)?.events ?? [];
-    return events.some((e) => e.type !== undefined && isSuilendEventType(e.type));
+    return suiEvents(raw.rawJson).some((e) => e.type !== undefined && isSuilendEventType(e.type));
   },
 
   decode(raw: RawTx, ctx: DecodeContext): DecodeResult {
-    const rawJson = raw.rawJson as SuiRawJsonShape | null;
-    const sender = rawJson?.transaction?.data?.sender;
+    const sender = ptbSender(raw.rawJson);
     if (sender === undefined || !ctx.wallets.has(sender)) return { kind: 'skip' };
-    const rawEvents = rawJson?.events ?? [];
+    const rawEvents = suiEvents(raw.rawJson);
 
     const out: TaxEvent[] = [];
     const emit = (
@@ -235,6 +202,24 @@ export const suilendHandler: Handler = {
     const settleSwaps: Array<{ index: number; payload: AggregatorSettlePayload }> = [];
 
     const problems: string[] = [];
+
+    /**
+     * Asset naming via the shared Sui registry (src/chains/sui/coins.ts —
+     * symbols, never type strings). An unresolvable type (unknown generic
+     * `::coin::COIN` wrapper) is a problem (→ manual queue), not a silent
+     * mislabel; the placeholder never persists because problems force
+     * kind:'unclassified'.
+     */
+    const assetSymbol = (coinType: SuilendTypeName): string => {
+      const symbol = suiCoinSymbol(coinType.name);
+      if (symbol === undefined) {
+        problems.push(
+          `unresolvable coin type '0x${coinType.name}' — extend src/chains/sui/coins.ts`,
+        );
+        return `0x${coinType.name}`;
+      }
+      return symbol;
+    };
 
     /**
      * ctokens → underlying via the reserve exchange rate. NO silent 1:1
@@ -523,30 +508,16 @@ export const suilendHandler: Handler = {
       }
     }
 
-    // Owned PTB containing a swap-shaped event this handler does not
-    // recognize (mirrors navi.ts's unrecognized-swap guard, review finding):
-    // returning kind:'ok' with only the lend legs would mark the tx 'decoded'
-    // and silently drop a §23-relevant disposal routed through a venue with a
-    // different summary event (direct Cetus swap, unknown aggregator, a
-    // redeployed settle package). When a RECOGNIZED route summary (7K router
-    // / settle::Swap) is present, per-pool hop legs (Cetus/Bluefin/Momentum/
+    // Unrecognized swap-shaped events in an owned PTB → manual queue (shared
+    // guard, sui-common.ts). When a RECOGNIZED route summary (7K router /
+    // settle::Swap) is present, per-pool hop legs (Cetus/Bluefin/Momentum/
     // FlowX — cross-01, suilend-03) are that route's internals and stay
     // ignored. Residual gap, accepted: a second, unrecognized venue swapping
     // in the same PTB as a recognized route.
     const hasRecognizedRoute =
       settleSwaps.length > 0 || sevenKSwaps.length > 0 || sevenKConfirm !== undefined;
     if (!hasRecognizedRoute) {
-      for (const [index, rawEvent] of rawEvents.entries()) {
-        const type = rawEvent.type;
-        if (type === undefined || isSuilendEventType(type)) continue;
-        const structName = type.split('<')[0]!.split('::').pop() ?? '';
-        if (/swap/i.test(structName)) {
-          problems.push(
-            `unrecognized swap leg '${type.split('<')[0]}' at event index ${index} in an owned ` +
-              'PTB — foreign-protocol disposal, label manually (no Cetus/generic Sui swap handler yet)',
-          );
-        }
-      }
+      problems.push(...foreignSwapProblems(rawEvents, isSuilendEventType));
     }
 
     // Partial decodes must not silently understate taxable activity.

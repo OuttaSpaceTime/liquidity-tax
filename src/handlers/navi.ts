@@ -1,5 +1,7 @@
+import { normalizeCoinType, suiCoinSymbol } from '../chains/sui/coins';
 import type { DecodeContext, DecodeResult, Handler, RawTx } from '../decoder/types';
 import type { Flag, TaxEvent } from '../types/event';
+import { foreignSwapProblems, ptbSender, suiEvents } from './sui-common';
 import {
   HAEDAL_EVENT_TYPES,
   NAVI_EVENT_TYPES,
@@ -83,224 +85,55 @@ export const NAVI_PACKAGE_LIQUIDATION_DEFINING =
   '0xc6374c7da60746002bfee93014aeb607e023b2d6b25c9e55a152b826dbc8c1ce';
 
 // ---------------------------------------------------------------------------
-// Navi assetId registry. Asset ids are immutable once assigned; table copied
-// from the on-chain pool registry snapshot in
+// Navi assetId → coin type. Asset ids are immutable once assigned; table
+// copied from the on-chain pool registry snapshot in
 // `onchain/navi-sdk/src/address.ts` (ids 0–31; the deprecation only affects
 // tooling, not these constants) and cross-checked live by the fixtures
 // (navi-01 pins 0=SUI and 5=vSUI, navi-02 pins 2=USDT and 6=haSUI).
-// Symbols follow the project convention (src/prices/token-map.ts / fixture
-// labels): vSUI, haSUI, USDT (wormhole), USDC = native, wUSDC = wormhole.
+// Symbols resolve through the shared Sui registry (src/chains/sui/coins.ts).
 // New listings (id > 31) resolve via the pool-event pairing; if that also
 // fails the tx goes to the manual queue rather than mislabeling.
 // ---------------------------------------------------------------------------
 
-interface NaviAsset {
-  id: number;
-  symbol: string;
-  /** Canonical coin type (short-form address ok — normalized before lookup). */
-  coinType: string;
-}
+const NAVI_ASSET_COIN_TYPES: ReadonlyMap<number, string> = new Map([
+  [0, '0x2::sui::SUI'],
+  [1, '0x5d4b302506645c37ff133b98c4b50a5ae14841659738d6d733d59d0d217a93bf::coin::COIN'], // wUSDC
+  [2, '0xc060006111016b8a020ad5b33834984a437aaa7d3c74c18e09a95d48aceab08c::coin::COIN'], // USDT (wormhole)
+  [3, '0xaf8cd5edc19c4512f4259f0bee101a40d41ebed738ade5874359610ef8eeced5::coin::COIN'], // WETH
+  [4, '0x06864a6f921804860930db6ddbe2e16acdf8504495ea7481637a1c8b9a8fe54b::cetus::CETUS'],
+  [5, '0x549e8b69270defbfafd4f94e17ec44cdbdd99820b33bda2278dea3b9a32d3f55::cert::CERT'], // vSUI
+  [6, '0xbde4ba4c2e274a60ce15c1cfff9e5c42e41654ac8b6d906a57efa4bd3c29f47d::hasui::HASUI'],
+  [7, '0xa99b8952d4f7d947ea77fe0ecdcc9e5fc0bcab2841d6e2a5aa00c3044e5544b5::navx::NAVX'],
+  [8, '0x027792d9fed7f9844eb4839566001bb6f6cb4804f66aa2da6fe1ee242d896881::coin::COIN'], // WBTC
+  [9, '0x2053d08c1e2bd02791056171aab0fd12bd7cd7efad2ab8f6b9c8902f14df2ff2::ausd::AUSD'],
+  [10, '0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC'],
+  [11, '0xd0e89b2af5e4910726fbcd8b8dd37bb79b29e5f83f7491bca830e94f7f226d29::eth::ETH'],
+  [12, '0x960b531667636f39e85867775f52f6b1f220a058c4de786905bdf761e06a56bb::usdy::USDY'],
+  [13, '0x5145494a5f5100e645e4b0aa950fa6b68f614e8c59e17bc5ded3495123a79178::ns::NS'],
+  [14, '0x5f496ed5d9d045c5b788dc1bb85f54100f2ede11e46f6a232c29daada4c5bdb6::coin::COIN'], // stBTC
+  [15, '0xdeeb7a4662eec9f2f3def03fb937a663dddaa2e215b8078a284d026b7946c270::deep::DEEP'],
+  [16, '0xf16e6b723f242ec745dfd7634ad072c42d5c1d9ac9d62a39c381303eaa57693a::fdusd::FDUSD'],
+  [17, '0xe1b45a0e641b9955a20aa0ad1c1f4ad86aad8afb07296d4085e349a50e90bdca::blue::BLUE'],
+  [18, '0xce7ff77a83ea0cb6fd39bd8748e2ec89a3f41e8efdc3f4eb123e0ca37b184db2::buck::BUCK'],
+  [19, '0x375f70cf2ae4c00bf37117d0c85a2c71545e6ee05c4a5c7d282cd66a4504b068::usdt::USDT'], // USDT (native)
+  [20, '0xd1b72982e40348d069bb1ff701e634c117bb5f741f44dff91e472d3b01461e55::stsui::STSUI'],
+  [21, '0xaafb102dd0902f5055cadecd687fb5b71ca82ef0e0285d90afde828ec58ca96b::btc::BTC'], // suiBTC
+  [22, '0xb7844e289a8410e50fb3ca48d69eb9cf29e27d223ef90353fe1bd8e27ff8f3f8::coin::COIN'], // SOL (wormhole)
+  [23, '0x3e8e9423d80e1774a7ca128fccd8bf5f1f7753be658c5e645929037f7c819040::lbtc::LBTC'],
+  [24, '0x356a26eb9e012a68958082340d4c4116e7f55615cf27affcff209cf0ae544f59::wal::WAL'],
+  [25, '0x3a304c7feba2d819ea57c3542d68439ca2c386ba02159c740f7b406e592c62ea::haedal::HAEDAL'],
+  [26, '0x876a4b7bce8aeaef60464c11f4026903e9afacab79b9b142686158aa86560b50::xbtc::XBTC'],
+  [27, '0x7262fb2f7a3a14c888c438a3cd9b912469a58cf60f367352c46584262e8299aa::ika::IKA'],
+  [28, '0x8f2b5eb696ed88b71fea398d330bccfa52f6e2a5a8e1ac6180fcb25c6de42ebc::coin::COIN'], // enzoBTC
+  [29, '0xd1a91b46bd6d966b62686263609074ad16cfdffc63c31a4775870a2d54d20c6b::mbtc::MBTC'],
+  [30, '0xa03ab7eee2c8e97111977b77374eaf6324ba617e7027382228350db08469189e::ybtc::YBTC'],
+  [31, '0x9d297676e7a4b771ab023291377b2adfaa4938fb9080b8d12430e4b108b836a9::xaum::XAUM'],
+]);
 
-const NAVI_ASSETS: readonly NaviAsset[] = [
-  { id: 0, symbol: 'SUI', coinType: '0x2::sui::SUI' },
-  {
-    id: 1,
-    symbol: 'wUSDC',
-    coinType: '0x5d4b302506645c37ff133b98c4b50a5ae14841659738d6d733d59d0d217a93bf::coin::COIN',
-  },
-  {
-    id: 2,
-    symbol: 'USDT',
-    coinType: '0xc060006111016b8a020ad5b33834984a437aaa7d3c74c18e09a95d48aceab08c::coin::COIN',
-  },
-  {
-    id: 3,
-    symbol: 'WETH',
-    coinType: '0xaf8cd5edc19c4512f4259f0bee101a40d41ebed738ade5874359610ef8eeced5::coin::COIN',
-  },
-  {
-    id: 4,
-    symbol: 'CETUS',
-    coinType: '0x06864a6f921804860930db6ddbe2e16acdf8504495ea7481637a1c8b9a8fe54b::cetus::CETUS',
-  },
-  {
-    id: 5,
-    symbol: 'vSUI',
-    coinType: '0x549e8b69270defbfafd4f94e17ec44cdbdd99820b33bda2278dea3b9a32d3f55::cert::CERT',
-  },
-  {
-    id: 6,
-    symbol: 'haSUI',
-    coinType: '0xbde4ba4c2e274a60ce15c1cfff9e5c42e41654ac8b6d906a57efa4bd3c29f47d::hasui::HASUI',
-  },
-  {
-    id: 7,
-    symbol: 'NAVX',
-    coinType: '0xa99b8952d4f7d947ea77fe0ecdcc9e5fc0bcab2841d6e2a5aa00c3044e5544b5::navx::NAVX',
-  },
-  {
-    id: 8,
-    symbol: 'WBTC',
-    coinType: '0x027792d9fed7f9844eb4839566001bb6f6cb4804f66aa2da6fe1ee242d896881::coin::COIN',
-  },
-  {
-    id: 9,
-    symbol: 'AUSD',
-    coinType: '0x2053d08c1e2bd02791056171aab0fd12bd7cd7efad2ab8f6b9c8902f14df2ff2::ausd::AUSD',
-  },
-  {
-    id: 10,
-    symbol: 'USDC',
-    coinType: '0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC',
-  },
-  {
-    id: 11,
-    symbol: 'ETH',
-    coinType: '0xd0e89b2af5e4910726fbcd8b8dd37bb79b29e5f83f7491bca830e94f7f226d29::eth::ETH',
-  },
-  {
-    id: 12,
-    symbol: 'USDY',
-    coinType: '0x960b531667636f39e85867775f52f6b1f220a058c4de786905bdf761e06a56bb::usdy::USDY',
-  },
-  {
-    id: 13,
-    symbol: 'NS',
-    coinType: '0x5145494a5f5100e645e4b0aa950fa6b68f614e8c59e17bc5ded3495123a79178::ns::NS',
-  },
-  {
-    id: 14,
-    symbol: 'stBTC',
-    coinType: '0x5f496ed5d9d045c5b788dc1bb85f54100f2ede11e46f6a232c29daada4c5bdb6::coin::COIN',
-  },
-  {
-    id: 15,
-    symbol: 'DEEP',
-    coinType: '0xdeeb7a4662eec9f2f3def03fb937a663dddaa2e215b8078a284d026b7946c270::deep::DEEP',
-  },
-  {
-    id: 16,
-    symbol: 'FDUSD',
-    coinType: '0xf16e6b723f242ec745dfd7634ad072c42d5c1d9ac9d62a39c381303eaa57693a::fdusd::FDUSD',
-  },
-  {
-    id: 17,
-    symbol: 'BLUE',
-    coinType: '0xe1b45a0e641b9955a20aa0ad1c1f4ad86aad8afb07296d4085e349a50e90bdca::blue::BLUE',
-  },
-  {
-    id: 18,
-    symbol: 'BUCK',
-    coinType: '0xce7ff77a83ea0cb6fd39bd8748e2ec89a3f41e8efdc3f4eb123e0ca37b184db2::buck::BUCK',
-  },
-  {
-    id: 19,
-    symbol: 'suiUSDT',
-    coinType: '0x375f70cf2ae4c00bf37117d0c85a2c71545e6ee05c4a5c7d282cd66a4504b068::usdt::USDT',
-  },
-  {
-    id: 20,
-    symbol: 'stSUI',
-    coinType: '0xd1b72982e40348d069bb1ff701e634c117bb5f741f44dff91e472d3b01461e55::stsui::STSUI',
-  },
-  {
-    id: 21,
-    symbol: 'suiBTC',
-    coinType: '0xaafb102dd0902f5055cadecd687fb5b71ca82ef0e0285d90afde828ec58ca96b::btc::BTC',
-  },
-  {
-    id: 22,
-    symbol: 'WSOL',
-    coinType: '0xb7844e289a8410e50fb3ca48d69eb9cf29e27d223ef90353fe1bd8e27ff8f3f8::coin::COIN',
-  },
-  {
-    id: 23,
-    symbol: 'LBTC',
-    coinType: '0x3e8e9423d80e1774a7ca128fccd8bf5f1f7753be658c5e645929037f7c819040::lbtc::LBTC',
-  },
-  {
-    id: 24,
-    symbol: 'WAL',
-    coinType: '0x356a26eb9e012a68958082340d4c4116e7f55615cf27affcff209cf0ae544f59::wal::WAL',
-  },
-  {
-    id: 25,
-    symbol: 'HAEDAL',
-    coinType: '0x3a304c7feba2d819ea57c3542d68439ca2c386ba02159c740f7b406e592c62ea::haedal::HAEDAL',
-  },
-  {
-    id: 26,
-    symbol: 'XBTC',
-    coinType: '0x876a4b7bce8aeaef60464c11f4026903e9afacab79b9b142686158aa86560b50::xbtc::XBTC',
-  },
-  {
-    id: 27,
-    symbol: 'IKA',
-    coinType: '0x7262fb2f7a3a14c888c438a3cd9b912469a58cf60f367352c46584262e8299aa::ika::IKA',
-  },
-  {
-    id: 28,
-    symbol: 'enzoBTC',
-    coinType: '0x8f2b5eb696ed88b71fea398d330bccfa52f6e2a5a8e1ac6180fcb25c6de42ebc::coin::COIN',
-  },
-  {
-    id: 29,
-    symbol: 'MBTC',
-    coinType: '0xd1a91b46bd6d966b62686263609074ad16cfdffc63c31a4775870a2d54d20c6b::mbtc::MBTC',
-  },
-  {
-    id: 30,
-    symbol: 'YBTC',
-    coinType: '0xa03ab7eee2c8e97111977b77374eaf6324ba617e7027382228350db08469189e::ybtc::YBTC',
-  },
-  {
-    id: 31,
-    symbol: 'XAUM',
-    coinType: '0x9d297676e7a4b771ab023291377b2adfaa4938fb9080b8d12430e4b108b836a9::xaum::XAUM',
-  },
-];
-
-/**
- * Normalize a Sui coin type for map lookup: strip the optional `0x`,
- * lowercase, left-pad the address to 64 hex chars (parsedJson strings come
- * without `0x` but fully padded; SDK constants use the short form).
- */
-function normalizeCoinType(coinType: string): string {
-  const [address, ...rest] = coinType.split('::');
-  const hex = (address ?? '').replace(/^0x/i, '').toLowerCase().padStart(64, '0');
-  return [hex, ...rest].join('::');
-}
-
-const SYMBOL_BY_ASSET_ID = new Map(NAVI_ASSETS.map((a) => [a.id, a.symbol]));
-const ASSET_BY_ID = new Map(NAVI_ASSETS.map((a) => [a.id, a]));
-const SYMBOL_BY_COIN_TYPE = new Map(
-  NAVI_ASSETS.map((a) => [normalizeCoinType(a.coinType), a.symbol]),
-);
-
-/**
- * Symbol for a coin-type string from parsedJson. Unknown types fall back to
- * the Move struct name (`…::navx::NAVX` → NAVX) — except generic wormhole
- * `::coin::COIN` wrappers, which are unidentifiable without the registry.
- */
-function symbolForCoinType(coinType: string): string | undefined {
-  const known = SYMBOL_BY_COIN_TYPE.get(normalizeCoinType(coinType));
-  if (known !== undefined) return known;
-  const structName = coinType.split('::')[2];
-  return structName === undefined || structName === 'COIN' ? undefined : structName;
-}
-
-// ---------------------------------------------------------------------------
-// Raw-tx event access
-// ---------------------------------------------------------------------------
-
-interface SuiEventShape {
-  type?: string;
-  parsedJson?: unknown;
-}
-
-function suiEvents(rawJson: unknown): readonly SuiEventShape[] {
-  const events = (rawJson as { events?: unknown }).events;
-  return Array.isArray(events) ? (events as SuiEventShape[]) : [];
+/** Symbol for a Navi reserve id via the shared registry; undefined for unknown ids. */
+function symbolForAssetId(assetId: number): string | undefined {
+  const coinType = NAVI_ASSET_COIN_TYPES.get(assetId);
+  return coinType === undefined ? undefined : suiCoinSymbol(coinType);
 }
 
 /**
@@ -463,20 +296,20 @@ export const naviHandler: Handler = {
       // registry knows the reserve, the paired coin type must agree with it;
       // a contradiction means the pairing picked a colliding leg → manual
       // queue instead of a silent asset mislabel.
-      const registryAsset = ASSET_BY_ID.get(reserve);
+      const registryCoinType = NAVI_ASSET_COIN_TYPES.get(reserve);
       if (
         coinType !== undefined &&
-        registryAsset !== undefined &&
-        normalizeCoinType(coinType) !== normalizeCoinType(registryAsset.coinType)
+        registryCoinType !== undefined &&
+        normalizeCoinType(coinType) !== normalizeCoinType(registryCoinType)
       ) {
         problems.push(
           `event[${eventIndex}]: paired pool leg coin '${coinType}' contradicts reserve ${reserve} ` +
-            `(${registryAsset.symbol}) — same-amount pairing collision, label manually`,
+            `(${suiCoinSymbol(registryCoinType) ?? registryCoinType}) — same-amount pairing collision, label manually`,
         );
         return undefined;
       }
-      const paired = coinType === undefined ? undefined : symbolForCoinType(coinType);
-      return paired ?? SYMBOL_BY_ASSET_ID.get(reserve);
+      const paired = coinType === undefined ? undefined : suiCoinSymbol(coinType);
+      return paired ?? symbolForAssetId(reserve);
     };
 
     const base = {
@@ -571,8 +404,8 @@ export const naviHandler: Handler = {
         if (ctx.wallets.has(p.user)) {
           // Decoded from the liquidated user's perspective. The seized total
           // includes the treasury cut (it left the user's position either way).
-          const collateral = SYMBOL_BY_ASSET_ID.get(p.collateral_asset);
-          const debt = SYMBOL_BY_ASSET_ID.get(p.debt_asset);
+          const collateral = symbolForAssetId(p.collateral_asset);
+          const debt = symbolForAssetId(p.debt_asset);
           if (collateral === undefined || debt === undefined) {
             problems.push(
               `LiquidationEvent[${index}]: unresolvable asset ids ${p.collateral_asset}/${p.debt_asset}`,
@@ -607,7 +440,7 @@ export const naviHandler: Handler = {
       } else if (type === NAVI_EVENT_TYPES.rewardClaimedV3) {
         const p = payload as NaviRewardClaimedV3;
         if (!ctx.wallets.has(p.user)) continue;
-        const symbol = symbolForCoinType(p.coin_type);
+        const symbol = suiCoinSymbol(p.coin_type);
         if (symbol === undefined) {
           problems.push(`RewardClaimed[${index}]: unresolvable coin type`);
           continue;
@@ -702,25 +535,11 @@ export const naviHandler: Handler = {
     }
 
     // Owned PTB containing a swap-shaped event no handler recognizes (e.g. a
-    // Cetus pool::SwapEvent disposing the withdrawn collateral, navi-04):
-    // returning kind:'ok' would mark the tx 'decoded' and silently drop a
-    // §23-relevant disposal. Until a Cetus/generic Sui swap rule lands, such
-    // txs go to the manual queue. (Conservative: an aggregator summary that a
-    // LATER handler would claim also trips this — manual review, never loss.)
-    const sender = (raw.rawJson as { transaction?: { data?: { sender?: string } } }).transaction
-      ?.data?.sender;
+    // Cetus pool::SwapEvent disposing the withdrawn collateral, navi-04) —
+    // see foreignSwapProblems in sui-common.ts.
+    const sender = ptbSender(raw.rawJson);
     if (sender !== undefined && ctx.wallets.has(sender)) {
-      for (const [index, event] of events.entries()) {
-        const type = event.type ?? '';
-        if (type === '' || isHandledType(type)) continue;
-        const structName = type.split('<')[0]!.split('::').pop() ?? '';
-        if (/swap/i.test(structName)) {
-          problems.push(
-            `unrecognized swap leg '${type.split('<')[0]}' at event index ${index} in an owned ` +
-              'PTB — foreign-protocol disposal, label manually (no Cetus/generic Sui swap handler yet)',
-          );
-        }
-      }
+      problems.push(...foreignSwapProblems(events, isHandledType));
     }
 
     // Partial decodes must not silently understate taxable activity.
