@@ -1,17 +1,17 @@
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import { unclassified } from '../../../db/schema';
-import type { Db } from '../client';
+import type { Db, DbTx } from '../client';
 
 export type UnclassifiedInsert = Omit<typeof unclassified.$inferInsert, 'resolvedAt'>;
 export type UnclassifiedRow = typeof unclassified.$inferSelect;
 
 /**
- * Idempotent upsert keyed on the (chain, tx_hash) primary key.
- * Matches the decoder-registry semantics: a re-encounter refreshes
- * raw_json + reason, re-opens the row (resolved_at = NULL), and
- * preserves the original first_seen_at.
+ * Idempotent upsert keyed on the (chain, tx_hash) primary key — used by the
+ * decoder registry's decodeAndPersist: a re-encounter refreshes raw_json +
+ * reason, re-opens the row (resolved_at = NULL), and preserves the original
+ * first_seen_at.
  */
-export function upsertUnclassified(db: Db, row: UnclassifiedInsert): void {
+export function upsertUnclassified(db: Db | DbTx, row: UnclassifiedInsert): void {
   db.insert(unclassified)
     .values(row)
     .onConflictDoUpdate({
@@ -37,7 +37,7 @@ export function resolveUnclassified(
     .run();
 }
 
-export function deleteUnclassified(db: Db, chain: string, txHash: string): void {
+export function deleteUnclassified(db: Db | DbTx, chain: string, txHash: string): void {
   db.delete(unclassified)
     .where(and(eq(unclassified.chain, chain), eq(unclassified.txHash, txHash)))
     .run();

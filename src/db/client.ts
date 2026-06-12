@@ -6,6 +6,9 @@ import { env } from '../config/env';
 /** Drizzle handle over bun:sqlite with the full schema — the one Db type project-wide. */
 export type Db = ReturnType<typeof drizzle<typeof schema>>;
 
+/** An open transaction on a Db. Repos accept `Db | DbTx` so callers can compose. */
+export type DbTx = Parameters<Parameters<Db['transaction']>[0]>[0];
+
 export interface DbClient {
   db: Db;
   sqlite: Database;

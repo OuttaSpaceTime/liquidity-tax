@@ -1,6 +1,6 @@
 import { and, asc, eq, sql } from 'drizzle-orm';
 import { events } from '../../../db/schema';
-import type { Db } from '../client';
+import type { Db, DbTx } from '../client';
 
 export type EventInsert = typeof events.$inferInsert;
 export type EventRow = typeof events.$inferSelect;
@@ -12,8 +12,10 @@ const BATCH_SIZE = 200;
  * Idempotent upsert keyed on UNIQUE(chain, tx_hash, log_index, emission_seq).
  * The surrogate autoincrement id stays stable on conflict; all payload
  * columns (incl. the bigint amount blobs) are refreshed from the incoming row.
+ * Accepts an open transaction (decoder decodeAndPersist) — batches become
+ * savepoints there.
  */
-export function upsertEvents(db: Db, rows: readonly EventInsert[]): void {
+export function upsertEvents(db: Db | DbTx, rows: readonly EventInsert[]): void {
   for (let i = 0; i < rows.length; i += BATCH_SIZE) {
     const batch = rows.slice(i, i + BATCH_SIZE);
     db.transaction((tx) => {

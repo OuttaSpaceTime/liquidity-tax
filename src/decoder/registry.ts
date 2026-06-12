@@ -1,6 +1,8 @@
-import { and, eq, gte, inArray, or, sql } from 'drizzle-orm';
-import { events, rawTxs, transferLinks, unclassified } from '../../db/schema';
+import { and, eq, gte, inArray, or } from 'drizzle-orm';
+import { events, rawTxs, transferLinks } from '../../db/schema';
 import type { Db } from '../db/client';
+import { upsertEvents } from '../db/repos/events';
+import { deleteUnclassified, upsertUnclassified } from '../db/repos/unclassified';
 import { applyLinkTags } from '../linker/run';
 import type { Chain, TaxEvent } from '../types/event';
 import type {
@@ -197,48 +199,20 @@ export class DecoderRegistry {
       }
 
       if (result.status === 'decoded') {
-        tx.insert(events)
-          .values(result.events.map(toEventRow))
-          .onConflictDoUpdate({
-            target: [events.chain, events.txHash, events.logIndex, events.emissionSeq],
-            set: {
-              timestamp: sql`excluded.timestamp`,
-              wallet: sql`excluded.wallet`,
-              type: sql`excluded.type`,
-              subtype: sql`excluded.subtype`,
-              sentAsset: sql`excluded.sent_asset`,
-              sentAmount: sql`excluded.sent_amount`,
-              receivedAsset: sql`excluded.received_asset`,
-              receivedAmount: sql`excluded.received_amount`,
-              priceUsdJson: sql`excluded.price_usd_json`,
-              positionId: sql`excluded.position_id`,
-              flagsJson: sql`excluded.flags_json`,
-              handlerId: sql`excluded.handler_id`,
-              handlerVersion: sql`excluded.handler_version`,
-            },
-          })
-          .run();
+        upsertEvents(tx, result.events.map(toEventRow));
         this.reapplyLinkerTags(tx, chain, txHash);
       }
 
       if (result.status === 'unclassified') {
-        tx.insert(unclassified)
-          .values({
-            chain,
-            txHash,
-            rawJson: raw.rawJson,
-            reason: result.reason,
-            firstSeenAt: Math.floor(Date.now() / 1000),
-          })
-          .onConflictDoUpdate({
-            target: [unclassified.chain, unclassified.txHash],
-            set: { rawJson: raw.rawJson, reason: result.reason, resolvedAt: null },
-          })
-          .run();
+        upsertUnclassified(tx, {
+          chain,
+          txHash,
+          rawJson: raw.rawJson,
+          reason: result.reason,
+          firstSeenAt: Math.floor(Date.now() / 1000),
+        });
       } else {
-        tx.delete(unclassified)
-          .where(and(eq(unclassified.chain, chain), eq(unclassified.txHash, txHash)))
-          .run();
+        deleteUnclassified(tx, chain, txHash);
       }
     });
 
