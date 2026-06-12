@@ -1,8 +1,8 @@
 import { and, eq, gte, inArray, or, sql } from 'drizzle-orm';
-import type { drizzle } from 'drizzle-orm/bun-sqlite';
-import * as schema from '../../db/schema';
 import { events, rawTxs, transferLinks, unclassified } from '../../db/schema';
-import type { Chain, Flag, TaxEvent } from '../types/event';
+import type { Db } from '../db/client';
+import { applyLinkTags } from '../linker/run';
+import type { Chain, TaxEvent } from '../types/event';
 import type {
   AggregationHook,
   DecodeContext,
@@ -12,8 +12,7 @@ import type {
   RawTx,
 } from './types';
 
-export type DecoderDb = ReturnType<typeof drizzle<typeof schema>>;
-type PersistTx = Parameters<Parameters<DecoderDb['transaction']>[0]>[0];
+type PersistTx = Parameters<Parameters<Db['transaction']>[0]>[0];
 
 export interface RegistryOptions {
   /** Owner wallet addresses per chain, injected by the runtime wallets loader. */
@@ -54,7 +53,7 @@ export class DecoderRegistry {
   private readonly aggregationHooks: AggregationHook[] = [];
 
   constructor(
-    private readonly db: DecoderDb,
+    private readonly db: Db,
     private readonly options: RegistryOptions = {},
   ) {}
 
@@ -247,9 +246,10 @@ export class DecoderRegistry {
   }
 
   /**
-   * Restore linker mutations (src/linker/run.ts tagEvent) on this tx's events
-   * after a re-decode refreshed their payload columns: links carry the durable
-   * truth, events carry the derived tags. Rejected links re-apply nothing.
+   * Restore linker mutations on this tx's events after a re-decode refreshed
+   * their payload columns: links carry the durable truth, events carry the
+   * derived tags (one shared policy — src/linker/run.ts applyLinkTags).
+   * Rejected links re-apply nothing.
    */
   private reapplyLinkerTags(tx: PersistTx, chain: Chain, txHash: string): void {
     const ids = tx
@@ -267,35 +267,8 @@ export class DecoderRegistry {
       .all();
     for (const link of links) {
       if (link.status === 'rejected') continue;
-      // Heuristic names from src/linker/match.ts LinkHeuristic.
-      if (link.heuristic === 'cross_chain_same_asset_30min') {
-        this.retagEvent(tx, link.outEventId, 'bridge_out');
-        this.retagEvent(tx, link.inEventId, 'bridge_in');
-      } else {
-        this.retagEvent(tx, link.outEventId, 'self_transfer', 'self_transfer');
-        this.retagEvent(tx, link.inEventId, 'self_transfer', 'self_transfer');
-      }
+      applyLinkTags(tx, link);
     }
-  }
-
-  /** Append a flag (deduplicated) and optionally retag the subtype — mirrors linker tagEvent. */
-  private retagEvent(
-    tx: PersistTx,
-    eventId: number,
-    flag: Flag,
-    subtype?: 'self_transfer',
-  ): void {
-    const row = tx
-      .select({ flagsJson: events.flagsJson })
-      .from(events)
-      .where(eq(events.id, eventId))
-      .get();
-    if (row === undefined) return;
-    const flags = [...new Set([...(row.flagsJson ?? []), flag])];
-    tx.update(events)
-      .set(subtype !== undefined ? { flagsJson: flags, subtype } : { flagsJson: flags })
-      .where(eq(events.id, eventId))
-      .run();
   }
 
   private buildContext(

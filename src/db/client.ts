@@ -3,7 +3,7 @@ import { drizzle } from 'drizzle-orm/bun-sqlite';
 import * as schema from '../../db/schema';
 import { env } from '../config/env';
 
-/** Drizzle handle over bun:sqlite with the full schema. Same shape as `DecoderDb`. */
+/** Drizzle handle over bun:sqlite with the full schema — the one Db type project-wide. */
 export type Db = ReturnType<typeof drizzle<typeof schema>>;
 
 export interface DbClient {

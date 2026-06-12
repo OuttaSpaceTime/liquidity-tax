@@ -1,6 +1,6 @@
 import { eq, inArray, and } from 'drizzle-orm';
 import { events, transferLinks } from '../../db/schema';
-import { matchTransfers, type LinkMatch, type TransferLeg } from './match';
+import { kindForHeuristic, matchTransfers, type LinkMatch, type TransferLeg } from './match';
 import { linkedEventIds } from './repo';
 import type { Db } from '../db/client';
 import type { Chain, Flag } from '../types/event';
@@ -81,23 +81,37 @@ export function runLinker(db: Db, opts: { dryRun?: boolean } = {}): LinkRunSumma
           heuristic: m.heuristic,
         })
         .run();
-      if (m.kind === 'bridge') {
-        tagEvent(tx, m.outEventId, 'bridge_out');
-        tagEvent(tx, m.inEventId, 'bridge_in');
-      } else {
-        tagEvent(tx, m.outEventId, 'self_transfer', 'self_transfer');
-        tagEvent(tx, m.inEventId, 'self_transfer', 'self_transfer');
-      }
+      applyLinkTags(tx, m);
     }
   });
   summary.written = matches.length;
   return summary;
 }
 
-type DbTx = Parameters<Parameters<Db['transaction']>[0]>[0];
+export type LinkerDbTx = Parameters<Parameters<Db['transaction']>[0]>[0];
+
+/**
+ * Tag the two events of one link from its heuristic — the ONE place the
+ * heuristic → tag policy lives (bridges: non-destructive `bridge_out` /
+ * `bridge_in` flags; self-transfers: retag to `transfer:self_transfer` +
+ * flag). Used by `runLinker` at link time and by the decoder's
+ * `reapplyLinkerTags` after a re-decode refreshes the event rows.
+ */
+export function applyLinkTags(
+  tx: LinkerDbTx,
+  link: { outEventId: number; inEventId: number; heuristic: string },
+): void {
+  if (kindForHeuristic(link.heuristic) === 'bridge') {
+    tagEvent(tx, link.outEventId, 'bridge_out');
+    tagEvent(tx, link.inEventId, 'bridge_in');
+  } else {
+    tagEvent(tx, link.outEventId, 'self_transfer', 'self_transfer');
+    tagEvent(tx, link.inEventId, 'self_transfer', 'self_transfer');
+  }
+}
 
 /** Append a flag (deduplicated) and optionally retag the subtype. */
-function tagEvent(tx: DbTx, eventId: number, flag: Flag, subtype?: 'self_transfer'): void {
+function tagEvent(tx: LinkerDbTx, eventId: number, flag: Flag, subtype?: 'self_transfer'): void {
   const row = tx
     .select({ flagsJson: events.flagsJson })
     .from(events)

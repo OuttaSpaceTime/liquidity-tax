@@ -36,6 +36,27 @@ export interface TransferLeg {
 
 export type LinkHeuristic = 'same_asset_30min_own_wallet' | 'cross_chain_same_asset_30min';
 
+/**
+ * What a heuristic's match MEANS for event tagging. Exhaustive over
+ * LinkHeuristic — adding a heuristic without classifying it fails the type
+ * check instead of silently mis-tagging on re-decode (the linker writes only
+ * the heuristic name to transfer_links; both runLinker and the decoder's
+ * reapplyLinkerTags derive the tag kind through this map).
+ */
+const HEURISTIC_KIND: Readonly<Record<LinkHeuristic, 'self_transfer' | 'bridge'>> = {
+  same_asset_30min_own_wallet: 'self_transfer',
+  cross_chain_same_asset_30min: 'bridge',
+};
+
+/** Tag kind for a persisted heuristic name; throws on unknown names (corrupt row). */
+export function kindForHeuristic(heuristic: string): 'self_transfer' | 'bridge' {
+  const kind = HEURISTIC_KIND[heuristic as LinkHeuristic];
+  if (kind === undefined) {
+    throw new Error(`transfer_links row carries unknown heuristic '${heuristic}'`);
+  }
+  return kind;
+}
+
 export interface LinkMatch {
   outEventId: number;
   inEventId: number;
@@ -82,7 +103,7 @@ function selfTransferCandidate(out: TransferLeg, inn: TransferLeg): Candidate | 
     confidence: diff === 0n ? 1.0 : 0.8,
     dt,
     heuristic: 'same_asset_30min_own_wallet',
-    kind: 'self_transfer',
+    kind: HEURISTIC_KIND.same_asset_30min_own_wallet,
   };
 }
 
@@ -111,7 +132,7 @@ function bridgeCandidate(out: TransferLeg, inn: TransferLeg): Candidate | undefi
     confidence,
     dt,
     heuristic: 'cross_chain_same_asset_30min',
-    kind: 'bridge',
+    kind: HEURISTIC_KIND.cross_chain_same_asset_30min,
   };
 }
 

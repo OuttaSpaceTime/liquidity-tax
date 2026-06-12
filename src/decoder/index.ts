@@ -1,8 +1,9 @@
-import { DecoderRegistry, type DecoderDb, type RegistryOptions } from './registry';
+import { DecoderRegistry, type RegistryOptions } from './registry';
+import type { Db } from '../db/client';
 import { ALL_HANDLERS } from '../handlers';
 
 export { DecoderRegistry, DuplicateEmissionError } from './registry';
-export type { DecoderDb, RegistryOptions } from './registry';
+export type { RegistryOptions } from './registry';
 export type {
   AggregationHook,
   DecodeContext,
@@ -13,7 +14,7 @@ export type {
   RawTx,
 } from './types';
 
-export function createDefaultRegistry(db: DecoderDb, options?: RegistryOptions): DecoderRegistry {
+export function createDefaultRegistry(db: Db, options?: RegistryOptions): DecoderRegistry {
   const registry = new DecoderRegistry(db, options);
   for (const handler of ALL_HANDLERS) registry.registerHandler(handler);
   // Phase-2 generic transfer rules (ERC-20/SPL/Sui coin movements) and
