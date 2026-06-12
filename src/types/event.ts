@@ -3,6 +3,7 @@ export type Protocol =
   | 'uniswap_v3'
   | 'aerodrome'
   | 'aave_v3'
+  | 'morpho'
   | 'orca_whirlpool'
   | 'turbos'
   | 'navi'
