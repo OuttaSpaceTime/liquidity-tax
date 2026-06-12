@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import { Command } from 'commander';
 import { requireEnv } from '../config/env';
 import { openDb } from '../db/client';
@@ -6,8 +7,13 @@ import { CoinGeckoClient } from './coingecko';
 import { DefiLlamaClient } from './defillama';
 import { importEurCache } from './import-eur-cache';
 
-export const DEFAULT_EUR_CACHE_PATH =
-  '/home/felix/Code/Misc/defi-tracker/liquidity-sheets/tax-report-2025/04-eur-pricing/eur_price_cache.json';
+/** Sibling-repo default (liquidity-sheets next to liquidity-tax); override via the [path] argument. */
+export const DEFAULT_EUR_CACHE_PATH = fileURLToPath(
+  new URL(
+    '../../../liquidity-sheets/tax-report-2025/04-eur-pricing/eur_price_cache.json',
+    import.meta.url,
+  ),
+);
 
 /**
  * `prices` subcommand tree. Wire into the root CLI with:

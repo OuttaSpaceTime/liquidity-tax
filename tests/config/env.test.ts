@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test';
-import { parseEnv, requireEnvKey } from './env';
+import { parseEnv, requireEnvKey } from '../../src/config/env';
 
 describe('parseEnv', () => {
   it('returns DB_PATH default and undefined API keys when env is empty', () => {

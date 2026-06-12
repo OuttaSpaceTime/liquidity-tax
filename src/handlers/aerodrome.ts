@@ -123,9 +123,6 @@ export class AerodromeHandler extends UniV3LikeHandler {
   protected readonly protocol: Protocol = 'aerodrome';
   protected readonly positionManager = AERODROME_SLIPSTREAM_NPM;
 
-  /** Roles of the tx currently being decoded (set for the duration of decodeParsed). */
-  private roles: TxRoles | undefined;
-
   /** Slipstream NPM events (inherited check) or any Aerodrome gauge event. */
   override matches(raw: RawTx): boolean {
     if (super.matches(raw)) return true;
@@ -165,46 +162,37 @@ export class AerodromeHandler extends UniV3LikeHandler {
     }
     const roles: TxRoles = { owner, owners, proxies, gauges, pools };
 
-    this.roles = roles;
-    try {
-      const npmEvents = this.decodeNpmEvents(raw, rawJson, logs, transfers);
-      if (typeof npmEvents === 'string') return { kind: 'unclassified', reason: npmEvents };
+    // Sickle == owner economically: attribute VERIFIED proxy actors to the
+    // owner EOA. Owners stay themselves; unknown third parties stay
+    // themselves too (no coercion — foreign actors must never become the
+    // owner).
+    const resolveWallet = (wallet: string): string =>
+      roles.proxies.has(wallet) ? roles.owner : wallet;
 
-      const events: TaxEvent[] = [...npmEvents];
-      /** Transfer log indexes consumed by the rules below (NPM matching keeps its own set). */
-      const claimed = new Set<number>();
-      const gaugeEvents = this.decodeGaugeClaims(raw, logs, transfers, claimed, roles);
-      if (typeof gaugeEvents === 'string') return { kind: 'unclassified', reason: gaugeEvents };
-      events.push(...gaugeEvents);
-      events.push(...this.decodeSwaps(raw, logs, transfers, claimed, roles));
-      events.push(...this.decodeWraps(raw, rawJson, logs, roles));
-      events.push(...this.decodeSickleSkims(raw, transfers, claimed, roles));
-      events.push(...this.decodeAeroReceives(raw, transfers, claimed, roles));
+    const npmEvents = this.decodeNpmEvents(raw, rawJson, logs, transfers, resolveWallet);
+    if (typeof npmEvents === 'string') return { kind: 'unclassified', reason: npmEvents };
 
-      if (events.length === 0) {
-        // Gauge NFT stake/unstake (and their zero-amount fee settlements)
-        // are intentionally silent — the position is still the owner's.
-        if (gauges.size > 0) return { kind: 'skip' };
-        return {
-          kind: 'unclassified',
-          reason: `${this.id}: Slipstream NPM events present but all legs zero`,
-        };
-      }
-      return { kind: 'ok', events };
-    } finally {
-      this.roles = undefined;
+    const events: TaxEvent[] = [...npmEvents];
+    /** Transfer log indexes consumed by the rules below (NPM matching keeps its own set). */
+    const claimed = new Set<number>();
+    const gaugeEvents = this.decodeGaugeClaims(raw, logs, transfers, claimed, roles);
+    if (typeof gaugeEvents === 'string') return { kind: 'unclassified', reason: gaugeEvents };
+    events.push(...gaugeEvents);
+    events.push(...this.decodeSwaps(raw, logs, transfers, claimed, roles));
+    events.push(...this.decodeWraps(raw, rawJson, logs, roles));
+    events.push(...this.decodeSickleSkims(raw, transfers, claimed, roles));
+    events.push(...this.decodeAeroReceives(raw, transfers, claimed, roles));
+
+    if (events.length === 0) {
+      // Gauge NFT stake/unstake (and their zero-amount fee settlements)
+      // are intentionally silent — the position is still the owner's.
+      if (gauges.size > 0) return { kind: 'skip' };
+      return {
+        kind: 'unclassified',
+        reason: `${this.id}: Slipstream NPM events present but all legs zero`,
+      };
     }
-  }
-
-  /**
-   * Sickle == owner economically: attribute VERIFIED proxy actors to the
-   * owner EOA. Owners stay themselves; unknown third parties stay themselves
-   * too (no coercion — foreign actors must never become the owner).
-   */
-  protected override resolveWallet(wallet: string): string {
-    const roles = this.roles;
-    if (roles === undefined) return wallet;
-    return roles.proxies.has(wallet) ? roles.owner : wallet;
+    return { kind: 'ok', events };
   }
 
   // ---------------------------------------------------------------------------

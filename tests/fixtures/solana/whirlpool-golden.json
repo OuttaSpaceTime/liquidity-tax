@@ -25,7 +25,8 @@
       "Non-zero collectReward: all 93 own CollectReward transfers AND ~900 sampled recent foreign Whirlpool txs have zero-amount reward transfers (emissions inactive program-wide). The zero-amount no-emit behavior is pinned by fixtures #6-#8; the non-zero path (lp_reward:emission_claim) remains unexercised.",
       "Single-tx rebalance (decrease+collect+close+open+increase in one tx): does not occur in this history — the Orca UI rebalances as a close tx followed by an open tx (fixtures #0/#1 and #4/#5/#9 cover the pieces). Cross-tx rebalance linking is phase-3 aggregation work.",
       "Position bundles, locked positions, repositionLiquidityV2: never used by this wallet."
-    ]
+    ],
+    "layout": "Layout divergence (documented, accepted): solana splits raw payloads into raw/<signature>.json plus this single manifest of expectations; base and sui use one self-describing <protocol>-NN-<description>.json per tx with raw payload + expected events inline. New Solana fixtures should converge on the per-tx convention used by base/sui."
   },
   "fixtures": [
     {

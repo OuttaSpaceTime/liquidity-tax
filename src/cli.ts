@@ -44,10 +44,8 @@ program
 
     const adapter = createDefaultChainRegistry().get(opts.chain);
     if (adapter === undefined) {
-      program.error(
-        `No ingest adapter registered for chain '${opts.chain}' yet — lands with phase 1A/1B/1C.`,
-      );
-      return;
+      // Unreachable: createDefaultChainRegistry registers all three chains.
+      throw new Error(`No ingest adapter registered for chain '${opts.chain}'.`);
     }
 
     const client = openDb();

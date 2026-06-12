@@ -131,12 +131,18 @@ export abstract class UniV3LikeHandler implements Handler {
   /**
    * Decode all NPM events of this receipt into TaxEvents (empty when every
    * leg is zero), or return an unclassified reason string on hard failures.
+   *
+   * `resolveWallet` maps the on-chain actor (mint recipient, collect
+   * recipient, or deposit funder) to the wallet put on the TaxEvent —
+   * identity by default; Aerodrome passes a resolver that maps vfat Sickle
+   * proxy contracts to the owner EOA.
    */
   protected decodeNpmEvents(
     raw: RawTx,
     rawJson: BaseRawJson,
     logs: ParsedLog[],
     transfers: Erc20Transfer[],
+    resolveWallet: (wallet: string) => string = (wallet) => wallet,
   ): TaxEvent[] | string {
     const groups = this.groupByTokenId(logs);
     const txFrom = rawJson.tx.from.toLowerCase();
@@ -147,7 +153,7 @@ export abstract class UniV3LikeHandler implements Handler {
     const claimed = new Set<number>();
     const events: TaxEvent[] = [];
     for (const group of groups) {
-      const result = this.decodeGroup(raw, group, transfers, txFrom, claimed);
+      const result = this.decodeGroup(raw, group, transfers, txFrom, claimed, resolveWallet);
       if (typeof result === 'string') return result;
       events.push(...result);
     }
@@ -165,6 +171,7 @@ export abstract class UniV3LikeHandler implements Handler {
     transfers: Erc20Transfer[],
     txFrom: string,
     claimed: Set<number>,
+    resolveWallet: (wallet: string) => string,
   ): TaxEvent[] | string {
     const events: TaxEvent[] = [];
     const positionId = this.positionId(group.tokenId);
@@ -183,7 +190,7 @@ export abstract class UniV3LikeHandler implements Handler {
       // vfat keeper; attributing the lp_deposit there would silently drop the
       // re-deposit basis from the owner's position lifecycle.
       const funder = tokens.transfer0?.from ?? tokens.transfer1?.from;
-      const wallet = this.resolveWallet(
+      const wallet = resolveWallet(
         group.minted !== undefined ? topicAddress(group.minted.topics[2]!) : (funder ?? txFrom),
       );
       for (const leg of nonzeroLegs(amounts, tokens)) {
@@ -260,7 +267,7 @@ export abstract class UniV3LikeHandler implements Handler {
             logIndex: log.logIndex,
             emissionSeq: leg.seq,
             timestamp: raw.blockTimestamp,
-            wallet: this.resolveWallet(recipient),
+            wallet: resolveWallet(recipient),
             receivedAsset: this.assetSymbol(leg.token),
             receivedAmount: leg.amount,
             positionId,
@@ -295,7 +302,7 @@ export abstract class UniV3LikeHandler implements Handler {
           logIndex: firstCollect.logIndex,
           emissionSeq: leg.seq,
           timestamp: raw.blockTimestamp,
-          wallet: this.resolveWallet(recipient),
+          wallet: resolveWallet(recipient),
           receivedAsset: this.assetSymbol(leg.token),
           receivedAmount: leg.amount,
           positionId,
@@ -316,16 +323,6 @@ export abstract class UniV3LikeHandler implements Handler {
   /** Asset naming: symbol for known Base tokens, lowercase address otherwise. */
   protected assetSymbol(tokenAddress: string): string {
     return baseTokenSymbol(tokenAddress);
-  }
-
-  /**
-   * Wallet attribution hook: receives the on-chain actor (mint recipient,
-   * collect recipient, or tx sender) and returns the wallet to put on the
-   * TaxEvent. Identity here; Aerodrome maps vfat Sickle proxy contracts (and
-   * keeper senders) to the owner EOA.
-   */
-  protected resolveWallet(wallet: string): string {
-    return wallet;
   }
 
   protected positionId(tokenId: bigint): PositionId {

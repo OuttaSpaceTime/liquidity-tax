@@ -12,6 +12,11 @@ import { suilendHandler } from './suilend';
  * Explicit registration list of all real protocol handlers (rotki: decoder
  * module loading in `_initialize_single_decoder`). Order matters within a
  * chain — earlier handlers see the tx first.
+ *
+ * Convention: new handlers are plain object literals (orca/turbos/navi/
+ * suilend style). Classes only where shared behavior is the point
+ * (UniV3LikeHandler and its subclasses); AaveV3Handler/MorphoHandler predate
+ * this note.
  */
 export const ALL_HANDLERS: readonly Handler[] = [
   // Base (EVM) — phase 1A

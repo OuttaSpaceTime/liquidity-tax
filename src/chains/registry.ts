@@ -22,7 +22,7 @@ export interface IngestResult {
 /**
  * Stage-1 ingest adapter (synthesis doc: "Fetch & Cache" — idempotent,
  * keyed by (chain, tx_hash), raw RPC responses cached verbatim).
- * One adapter per chain; implementations land with phases 1A/1B/1C.
+ * One adapter per chain: base/ingest.ts, solana/ingest.ts, sui/ingest.ts.
  */
 export interface IngestAdapter {
   readonly chain: Chain;
@@ -50,14 +50,13 @@ export class ChainRegistry {
 }
 
 /**
- * Explicit registration list, mirroring `createDefaultRegistry` in
- * `src/decoder/index.ts`. Chain ingest adapters (base/viem, solana/kit,
- * sui) register here as their issues land.
+ * Explicit registration list of all chain ingest adapters, mirroring
+ * `createDefaultRegistry` in `src/decoder/index.ts`.
  */
 export function createDefaultChainRegistry(): ChainRegistry {
   const registry = new ChainRegistry();
-  registry.register(baseIngestAdapter); // [1A.1]
-  registry.register(createSolanaIngestAdapter()); // [1B.1]
-  registry.register(createSuiIngestAdapter()); // [1C.2]
+  registry.register(baseIngestAdapter);
+  registry.register(createSolanaIngestAdapter());
+  registry.register(createSuiIngestAdapter());
   return registry;
 }
