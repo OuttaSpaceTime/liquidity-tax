@@ -207,6 +207,91 @@ describe('backfillPrices', () => {
     expect(summary.stopped).toBe('rate_limited');
   });
 
+  it('records unexpected client errors as failures and keeps going', async () => {
+    const { db } = createTestDb();
+    insertEvent(db, { txHash: '0x1', timestamp: T0, sentAsset: 'ETH', receivedAsset: 'USDC' });
+    const { deps, cgCalls } = fakeClients((cgId) => {
+      if (cgId === 'ethereum') throw new Error('boom');
+      return ok(1, 0.9);
+    });
+
+    const summary = await backfillPrices(db, { maxCalls: 10 }, deps);
+
+    // Non-rate-limit errors must not abort the run — the next task still runs.
+    expect(cgCalls).toHaveLength(2);
+    expect(summary.failures).toEqual([{ cgId: 'ethereum', date: '2025-07-05', reason: 'boom' }]);
+    expect(summary).toMatchObject({ written: 1, stopped: 'completed' });
+    expect(getPrice(db, 'USDC', '2025-07-05')).toBeDefined();
+  });
+
+  it('records unexpected errors during EUR re-pricing without aborting', async () => {
+    const { db } = createTestDb();
+    upsertPrices(db, [
+      { asset: 'ETH', date: '2025-07-05', usdPrice: 2000, eurPrice: null, source: 'defillama' },
+    ]);
+    const { deps } = fakeClients(() => {
+      throw new Error('boom');
+    });
+
+    const summary = await backfillPrices(db, { maxCalls: 10 }, deps);
+
+    expect(summary.failures).toEqual([{ cgId: 'ethereum', date: '2025-07-05', reason: 'boom' }]);
+    expect(summary).toMatchObject({ eurRepriced: 0, stopped: 'completed' });
+    expect(getPrice(db, 'ETH', '2025-07-05')?.source).toBe('defillama');
+  });
+
+  it('stops before the DefiLlama fallback when the budget is already spent', async () => {
+    const { db } = createTestDb();
+    insertEvent(db, { txHash: '0x1', timestamp: T0, sentAsset: 'ETH' });
+    const { deps, cgCalls, llamaCalls } = fakeClients(
+      () => ({ status: 'unavailable', reason: 'out_of_range' }),
+      1,
+    );
+
+    const summary = await backfillPrices(db, { maxCalls: 1 }, deps);
+
+    // Budget of 1: the CG miss consumes it; the llama fallback must not fire.
+    expect(cgCalls).toHaveLength(1);
+    expect(llamaCalls).toEqual([]);
+    expect(summary).toMatchObject({ written: 0, stopped: 'max_calls' });
+  });
+
+  it('skips the EUR re-pricing pass when the first pass exhausts the budget exactly', async () => {
+    const { db } = createTestDb();
+    insertEvent(db, { txHash: '0x1', timestamp: T0, sentAsset: 'ETH' });
+    upsertPrices(db, [
+      { asset: 'USDC', date: '2025-07-05', usdPrice: 1, eurPrice: null, source: 'defillama' },
+    ]);
+    const { deps, cgCalls } = fakeClients(() => ok(2000, 1800));
+
+    const summary = await backfillPrices(db, { maxCalls: 1 }, deps);
+
+    // First pass completes within budget; the second pass finds zero calls left.
+    expect(cgCalls).toEqual([{ cgId: 'ethereum', date: '2025-07-05' }]);
+    expect(summary).toMatchObject({ written: 1, eurRepriced: 0, stopped: 'max_calls' });
+    expect(getPrice(db, 'USDC', '2025-07-05')?.eurPrice).toBeNull();
+  });
+
+  it('stops cleanly when CoinGecko rate-limits during the EUR re-pricing pass', async () => {
+    const { db } = createTestDb();
+    upsertPrices(db, [
+      { asset: 'ETH', date: '2025-07-05', usdPrice: 2000, eurPrice: null, source: 'defillama' },
+    ]);
+    const { deps, cgCalls } = fakeClients(() => {
+      throw new CoinGeckoRateLimitError('rate limited');
+    });
+
+    const summary = await backfillPrices(db, { maxCalls: 10 }, deps);
+
+    expect(cgCalls).toHaveLength(1);
+    expect(summary).toMatchObject({ eurRepriced: 0, stopped: 'rate_limited' });
+    expect(getPrice(db, 'ETH', '2025-07-05')).toMatchObject({
+      usdPrice: 2000,
+      eurPrice: null,
+      source: 'defillama',
+    });
+  });
+
   it('is idempotent — a re-run after success makes zero API calls', async () => {
     const { db } = createTestDb();
     insertEvent(db, { txHash: '0x1', timestamp: T0, sentAsset: 'ETH' });

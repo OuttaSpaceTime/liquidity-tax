@@ -69,6 +69,8 @@ Single gate command — run before every commit:
 
     bun run check   # tsc --noEmit && eslint . && bun test
 
+Per-file line/function coverage table: `bun run test:coverage` (Bun's built-in coverage).
+
 After any `db/schema.ts` change:
 
     bun run db:generate   # regenerate migration SQL from schema

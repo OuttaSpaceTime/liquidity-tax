@@ -8,6 +8,7 @@
     "check": "tsc --noEmit && eslint . && bun test",
     "cli": "bun src/cli.ts",
     "test": "bun test",
+    "test:coverage": "bun test --coverage",
     "lint": "eslint .",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "bun db/migrate.ts",
