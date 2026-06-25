@@ -1,5 +1,8 @@
 node_modules/
 dist/
+.next/
+*.tsbuildinfo
+next-env.d.ts
 .env
 config/wallets.ts
 config/wallets.staged.ts
