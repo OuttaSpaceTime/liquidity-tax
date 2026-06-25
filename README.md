@@ -17,8 +17,9 @@ Run via `bun run cli <command>` (or `bun src/cli.ts <command>`):
 
 | Command | Description |
 |---|---|
-| `ingest --chain <base\|solana\|sui> [--label <l>]` | Fetch raw txs for configured wallets into `raw_txs` (idempotent) |
+| `ingest --chain <base\|solana\|sui> [--label <l>] [--full]` | Fetch raw txs for configured wallets into `raw_txs` (idempotent). `--full` re-scans from genesis (Base only; ignores the per-address block watermark) |
 | `decode [--chain <chain>]` | Three-phase decode over `raw_txs` → upsert `events`, queue `unclassified`, rebuild `positions` (idempotent) |
+| `refresh [--chain <chain>] [--max-calls <n>]` | Full pipeline end-to-end: ingest (all chains) → decode → link → prices (idempotent). A failing chain is skipped so later stages still run; needs `COINGECKO_API_KEY` |
 | `link [--dry-run]` | Match own-wallet `transfer:send`/`receive` pairs (self-transfers + cross-chain bridges) → `transfer_links` |
 | `prices backfill [--max-calls <n>]` | Fetch missing daily EUR+USD closes (CoinGecko, DefiLlama fallback) |
 | `prices import-eur-cache [path]` | Seed prices from the liquidity-sheets EUR cache (saves API quota) |
@@ -36,6 +37,7 @@ Run via `bun run cli <command>` (or `bun src/cli.ts <command>`):
 | `bun run db:generate` | Regenerate migration SQL from `db/schema.ts` |
 | `bun run db:migrate` | Apply pending migrations to local SQLite |
 | `bun run db:studio` | Open Drizzle Studio (local DB browser) |
+| `bun run dashboard` | Launch the read-only Next.js/React dashboard (`apps/dashboard`, Bun runtime) — positions, activity, reports. See `apps/dashboard/README.md` and `.claude/docs/planning/08-dashboard-definition-20260617.md` |
 
 ## Re-decode after a handler change
 

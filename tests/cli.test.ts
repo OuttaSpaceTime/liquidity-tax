@@ -24,12 +24,31 @@ beforeAll(() => {
 afterAll(() => tmp.cleanup());
 
 describe('liquidity-tax CLI', () => {
-  it('wires ingest, decode, prices, link, and status commands into --help', () => {
+  it('wires ingest, decode, prices, link, refresh, and status commands into --help', () => {
     const res = runCli(['--help'], tmp.dbPath);
     expect(res.exitCode).toBe(0);
-    for (const cmd of ['ingest', 'decode', 'prices', 'link', 'status']) {
+    for (const cmd of ['ingest', 'decode', 'prices', 'link', 'refresh', 'status']) {
       expect(res.stdout).toContain(cmd);
     }
+  });
+
+  it('exposes --full on the ingest command for a from-genesis re-scan', () => {
+    const res = runCli(['ingest', '--help'], tmp.dbPath);
+    expect(res.exitCode).toBe(0);
+    expect(res.stdout).toContain('--full');
+  });
+
+  it('refresh rejects a non-positive --max-calls before touching anything', () => {
+    const res = runCli(['refresh', '--max-calls', '0'], tmp.dbPath);
+    expect(res.exitCode).not.toBe(0);
+    expect(res.output).toContain("--max-calls must be a positive integer, got '0'");
+  });
+
+  it('refresh rejects an unknown chain with the expected-chains message', () => {
+    const res = runCli(['refresh', '--chain', 'dogecoin'], tmp.dbPath);
+    expect(res.exitCode).not.toBe(0);
+    expect(res.output).toContain("Unknown chain 'dogecoin'");
+    expect(res.output).toContain('base, solana, sui');
   });
 
   it('status reports empty per-chain counts and zero table totals on a fresh DB', () => {
