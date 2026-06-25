@@ -78,7 +78,7 @@ function makeBundle(overrides: Partial<BaseTxBundle> = {}): BaseTxBundle {
 // ---------------------------------------------------------------------------
 
 describe('withBackoff', () => {
-  test('retries on 429 message with exponential delays, then succeeds', async () => {
+  test('retries on 429 with jittered exponential delays, then succeeds', async () => {
     let attempts = 0;
     const delays: number[] = [];
     const result = await withBackoff(
@@ -87,11 +87,12 @@ describe('withBackoff', () => {
         if (attempts < 3) throw new Error('HTTP request failed: 429 Too Many Requests');
         return Promise.resolve('ok');
       },
-      { baseMs: 100, retries: 5, sleep: (ms) => void delays.push(ms) },
+      // Fixed rng=0.5 → half of each exponential cap, proving jitter scales the delay.
+      { baseMs: 100, retries: 5, sleep: (ms) => void delays.push(ms), rng: () => 0.5 },
     );
     expect(result).toBe('ok');
     expect(attempts).toBe(3);
-    expect(delays).toEqual([100, 200]);
+    expect(delays).toEqual([50, 100]); // 0.5 * [100, 200]
   });
 
   test('retries on error objects carrying status 429 (viem HttpRequestError shape)', async () => {
@@ -533,6 +534,86 @@ function makeFakeRpc(): { request: RpcRequestFn; calls: Map<string, number> } {
   };
   return { request, calls };
 }
+
+describe('ingestBase throttle', () => {
+  test('paces RPC calls behind a client-side request floor', async () => {
+    const { db } = createTestDb();
+    const { request } = makeFakeRpc();
+    const waits: number[] = [];
+
+    await ingestBase(request, db, [OWNER], {
+      log: () => undefined,
+      requestFloorMs: 50,
+      sleep: async (ms) => {
+        waits.push(ms);
+      },
+    });
+
+    // With a floor every RPC call after the first reserves a slot, so the
+    // throttle sleeps repeatedly instead of letting an unbounded burst fly.
+    expect(waits.length).toBeGreaterThan(0);
+  });
+
+  test('floor of 0 (default) never throttles — unit-test speed is unaffected', async () => {
+    const { db } = createTestDb();
+    const { request } = makeFakeRpc();
+    let slept = false;
+
+    await ingestBase(request, db, [OWNER], {
+      log: () => undefined,
+      sleep: async () => {
+        slept = true;
+      },
+    });
+
+    expect(slept).toBe(false);
+  });
+});
+
+describe('ingestBase --full re-scan', () => {
+  // Seed a watermark: OWNER already ingested through block 101 (0x65), so an
+  // incremental run resumes there. 0xccc3 sits at block 100 — below it.
+  function seedWatermark(sqlite: ReturnType<typeof createTestDb>['sqlite']): void {
+    sqlite
+      .query(
+        `INSERT INTO raw_txs (chain, tx_hash, block_number, block_timestamp, raw_json, fetched_at)
+         VALUES ('base', '0xaaa1', 101, 1, ?, 1)`,
+      )
+      .run(JSON.stringify({ addresses: [OWNER] }));
+  }
+
+  test('without --full, resumes from the block watermark (older tx stays missed)', async () => {
+    const { db, sqlite } = createTestDb();
+    seedWatermark(sqlite);
+    const { request } = makeFakeRpc();
+
+    await ingestBase(request, db, [OWNER], { log: () => undefined });
+
+    const hashes = sqlite
+      .query<{ tx_hash: string }, []>(`SELECT tx_hash FROM raw_txs ORDER BY tx_hash`)
+      .all()
+      .map((r) => r.tx_hash);
+    // 0xccc3 (block 100) is below the watermark, never enumerated — so the
+    // Sickle it touches is never discovered and 0xddd4 is missed too.
+    expect(hashes).toEqual(['0xaaa1']);
+  });
+
+  test('--full forces fromBlock 0, recovering txs below the watermark', async () => {
+    const { db, sqlite } = createTestDb();
+    seedWatermark(sqlite);
+    const { request } = makeFakeRpc();
+
+    await ingestBase(request, db, [OWNER], { full: true, log: () => undefined });
+
+    const hashes = sqlite
+      .query<{ tx_hash: string }, []>(`SELECT tx_hash FROM raw_txs ORDER BY tx_hash`)
+      .all()
+      .map((r) => r.tx_hash);
+    // Genesis re-scan re-enumerates 0xccc3 (block 100), which re-discovers the
+    // Sickle and its 0xddd4 tx.
+    expect(hashes).toEqual(['0xaaa1', '0xccc3', '0xddd4']);
+  });
+});
 
 describe('ingestBase', () => {
   test('captures wallet txs plus Sickle-only txs discovered via EIP-1167 probing', async () => {

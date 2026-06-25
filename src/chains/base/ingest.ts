@@ -4,6 +4,7 @@ import { upsertEvents, type EventInsert } from '../../db/repos/events';
 import { upsertRawTxs, type RawTxInsert } from '../../db/repos/raw-txs';
 import type { Wallet } from '../../config/wallets-loader';
 import type { IngestAdapter, IngestOptions, IngestResult } from '../registry';
+import { createThrottle, defaultSleep } from '../ingest-utils';
 import { createBaseClient, createPublicBaseClient } from './client';
 import { TRANSFER_TOPIC, topicAddress } from './log-utils';
 import type {
@@ -52,6 +53,12 @@ const ASSET_TRANSFER_CATEGORIES = ['external', 'internal', 'erc20', 'erc721', 'e
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 const FETCH_CONCURRENCY = 8;
 const STORE_CHUNK = 50;
+/**
+ * Client-side request floor for the Base RPC (~13 req/s). Unlike solana/sui,
+ * the Base path fans out tx+receipt fetches concurrently, so without a floor a
+ * `--full` re-scan bursts dozens of requests at once and trips Alchemy's 429.
+ */
+const BASE_REQUEST_FLOOR_MS = 75;
 
 // Raw RPC payload shapes (verbatim Alchemy/JSON-RPC, hex quantities) live in
 // ./raw-json.ts — the payload contract shared with the Base handlers.
@@ -83,6 +90,8 @@ export interface BackoffOptions {
   retries?: number;
   /** Injectable sleep for tests. */
   sleep?: (ms: number) => Promise<void> | void;
+  /** Injectable [0,1) source for jitter (default Math.random); fixed in tests. */
+  rng?: () => number;
 }
 
 function isRateLimitError(error: unknown): boolean {
@@ -97,12 +106,16 @@ export async function withBackoff<T>(fn: () => Promise<T>, opts: BackoffOptions 
   const baseMs = opts.baseMs ?? 500;
   const retries = opts.retries ?? 6;
   const sleep = opts.sleep ?? ((ms: number) => Bun.sleep(ms));
+  const rng = opts.rng ?? Math.random;
   for (let attempt = 0; ; attempt += 1) {
     try {
       return await fn();
     } catch (error) {
       if (!isRateLimitError(error) || attempt >= retries) throw error;
-      await sleep(baseMs * 2 ** attempt);
+      // Full jitter: a random point in [0, cap). De-correlates simultaneous
+      // retries (a burst of concurrent calls all 429 together) so they don't
+      // re-collide in lockstep and exhaust the retry budget.
+      await sleep(rng() * baseMs * 2 ** attempt);
     }
   }
 }
@@ -528,6 +541,22 @@ interface IngestBaseOptions {
    * `alchemy_getAssetTransfers`.
    */
   fallbackRequest?: RpcRequestFn;
+  /**
+   * Re-enumerate every wallet from genesis (`fromBlock: 0`) instead of resuming
+   * at its per-address block watermark (`maxIngestedBlock`). One-time deep
+   * re-scan — e.g. after enabling Base on an Alchemy key that previously fell
+   * back to the logs-only path and missed plain-ETH transfers. Idempotent: the
+   * known-hash check still skips refetching txs already in `raw_txs`.
+   */
+  full?: boolean;
+  /**
+   * Client-side request floor (ms) gating every RPC call — proactive throttle,
+   * not just retry-on-failure. Defaults to 0 (disabled) so unit tests run
+   * instantly; the adapter sets the production floor.
+   */
+  requestFloorMs?: number;
+  /** Injectable sleep for the throttle (tests). */
+  sleep?: (ms: number) => Promise<void>;
 }
 
 function chunk<T>(items: readonly T[], size: number): T[][] {
@@ -590,13 +619,23 @@ export async function ingestBase(
   const log = opts.log ?? ((line: string) => console.log(line));
   const owners = walletAddresses.map((a) => a.toLowerCase());
 
-  let rpc = request;
+  // Proactive request floor shared across every RPC call (primary + fallback),
+  // so concurrent tx+receipt fetches drain at a steady rate instead of bursting.
+  const throttle = createThrottle(opts.requestFloorMs ?? 0, opts.sleep ?? defaultSleep);
+  const throttled =
+    (r: RpcRequestFn): RpcRequestFn =>
+    async (args) => {
+      await throttle();
+      return r(args);
+    };
+
+  let rpc = throttled(request);
   let useLogsPath = false;
   const counterparties = new Set<string>();
   const byHash = new Map<string, TxEntry>();
 
   const enumerateInto = async (target: string): Promise<number> => {
-    const fromBlock = maxIngestedBlock(db, target);
+    const fromBlock = opts.full === true ? 0 : maxIngestedBlock(db, target);
     let refs: TxRef[];
     let transfersByHash = new Map<string, AlchemyAssetTransfer[]>();
     if (!useLogsPath) {
@@ -620,7 +659,7 @@ export async function ingestBase(
       } catch (error) {
         if (opts.fallbackRequest === undefined || !isNetworkUnavailableError(error)) throw error;
         useLogsPath = true;
-        rpc = opts.fallbackRequest;
+        rpc = throttled(opts.fallbackRequest);
         log(
           'base ingest: Alchemy has no Base access — falling back to public-RPC eth_getLogs enumeration ' +
             '(plain ETH transfers without logs are not visible on this path)',
@@ -743,7 +782,7 @@ export const baseIngestAdapter: IngestAdapter = {
       request,
       opts.db,
       wallets.map((w) => w.address),
-      { fallbackRequest },
+      { fallbackRequest, full: opts.full, requestFloorMs: BASE_REQUEST_FLOOR_MS },
     );
   },
 };

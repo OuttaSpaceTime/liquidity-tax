@@ -10,6 +10,12 @@ export interface IngestOptions {
   db: Db;
   /** Optional lower bound (unix seconds); adapters may approximate by block/slot/checkpoint. */
   since?: number;
+  /**
+   * Re-enumerate full history from genesis instead of resuming incrementally.
+   * Only the Base adapter resumes from a persistent watermark, so this is a
+   * no-op for solana/sui (they re-enumerate every run regardless).
+   */
+  full?: boolean;
 }
 
 export interface IngestResult {
