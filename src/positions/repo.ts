@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
 import { events, positions } from '../../db/schema';
 import type { Db } from '../db/client';
 import { reducePositionEvents, type PositionSnapshot, type PositionState } from './tracker';
@@ -19,6 +19,12 @@ export interface ListPositionsOptions {
   wallet?: string;
   /** Only positions without a closedAt. */
   openOnly?: boolean;
+  /** Only positions with a closedAt (mutually exclusive with openOnly). */
+  closedOnly?: boolean;
+  /** 'opened' (default): openedAt asc. 'closed_desc': most-recently-closed first. */
+  orderBy?: 'opened' | 'closed_desc';
+  /** Cap the result count (e.g. a recent-closed list). */
+  limit?: number;
 }
 
 export function getPosition(db: Db, positionId: string): PositionRow | undefined {
@@ -35,9 +41,14 @@ export function listPositions(db: Db, options: ListPositionsOptions = {}): Posit
   if (options.chain !== undefined) conditions.push(eq(positions.chain, options.chain));
   if (options.wallet !== undefined) conditions.push(eq(positions.wallet, options.wallet));
   if (options.openOnly === true) conditions.push(isNull(positions.closedAt));
+  if (options.closedOnly === true) conditions.push(isNotNull(positions.closedAt));
   const base = db.select().from(positions);
-  const query = conditions.length > 0 ? base.where(and(...conditions)) : base;
-  return query.orderBy(asc(positions.openedAt), asc(positions.positionId)).all();
+  const filtered = conditions.length > 0 ? base.where(and(...conditions)) : base;
+  const ordered =
+    options.orderBy === 'closed_desc'
+      ? filtered.orderBy(desc(positions.closedAt), asc(positions.positionId))
+      : filtered.orderBy(asc(positions.openedAt), asc(positions.positionId));
+  return (options.limit !== undefined ? ordered.limit(options.limit) : ordered).all();
 }
 
 /**
