@@ -4,12 +4,13 @@ import { createDefaultRegistry } from '../../src/decoder';
 import { makeRawTx, insertRawTx } from './helpers';
 
 describe('createDefaultRegistry — explicit registration list', () => {
-  it('registers all 8 protocol handlers', () => {
+  it('registers all 9 protocol handlers', () => {
     const { db } = createTestDb();
     const registry = createDefaultRegistry(db);
     expect(registry.handlerIds().sort()).toEqual([
       'aave_v3',
       'aerodrome',
+      'kamino',
       'morpho',
       'navi',
       'orca_whirlpool',

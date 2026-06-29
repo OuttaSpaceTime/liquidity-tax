@@ -4,6 +4,7 @@ import { AerodromeHandler } from './aerodrome';
 import { AaveV3Handler } from './aave-v3';
 import { MorphoHandler } from './morpho';
 import { orcaWhirlpoolHandler } from './orca-whirlpool';
+import { kaminoHandler } from './kamino';
 import { turbosHandler } from './turbos';
 import { naviHandler } from './navi';
 import { suilendHandler } from './suilend';
@@ -26,6 +27,7 @@ export const ALL_HANDLERS: readonly Handler[] = [
   new MorphoHandler(),
   // Solana — phase 1B
   orcaWhirlpoolHandler,
+  kaminoHandler,
   // Sui — phase 1C. Turbos runs LAST: aggregator-routed PTBs (7k settle::Swap,
   // FlowX universal_router::Swap) often route one hop through a Turbos pool;
   // the dominant protocol (navi/suilend) claims the collapsed swap total first

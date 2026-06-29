@@ -1,0 +1,82 @@
+{
+  "fixtures": [
+    {
+      "txHash": "4pP9htJGBQYZ3NWnQ7xz1fUocEpkuAjY8EhbzFYgT9Ji4nrfKidAd9EB3ofgAoZhv8kDsULcwRncdzgnjAJY8Q9L",
+      "source": "own",
+      "case": "kamino-01-supply-sol",
+      "notes": "supply native SOL collateral (wSOL leg) \u2014 DepositReserveLiquidityAndObligationCollateralV2; ephemeral wSOL ATA so neither transfer side shows as owner-owned; amount/mint come from the CPI TransferChecked leg",
+      "wallet": "HT2yaxCEtvr8UMHnQb9LKZre81v7S9cKRgrqSsZ3EXd4",
+      "expectedStatus": "decoded",
+      "expectedEvents": [
+        {
+          "type": "lend_supply",
+          "subtype": "deposit",
+          "sentAsset": "So11111111111111111111111111111111111111112",
+          "sentAmount": "4037221947",
+          "logIndex": 16,
+          "emissionSeq": 0,
+          "timestamp": 1782547953,
+          "wallet": "HT2yaxCEtvr8UMHnQb9LKZre81v7S9cKRgrqSsZ3EXd4"
+        }
+      ]
+    },
+    {
+      "txHash": "2EqpvYJtQFpcZLMUheXg8AFVUKkYuWS76SpdNxu6tjjwkwRE5oHdZU8eLX13nEf9hjEn73QnREUh7GFCFnUTSqCh",
+      "source": "own",
+      "case": "kamino-02-withdraw-sol",
+      "notes": "withdraw SOL collateral \u2014 WithdrawObligationCollateralAndRedeemReserveCollateralV2 (received side)",
+      "wallet": "HT2yaxCEtvr8UMHnQb9LKZre81v7S9cKRgrqSsZ3EXd4",
+      "expectedStatus": "decoded",
+      "expectedEvents": [
+        {
+          "type": "lend_supply",
+          "subtype": "withdraw",
+          "receivedAsset": "So11111111111111111111111111111111111111112",
+          "receivedAmount": "300000001",
+          "logIndex": 11,
+          "emissionSeq": 0,
+          "timestamp": 1782548162,
+          "wallet": "HT2yaxCEtvr8UMHnQb9LKZre81v7S9cKRgrqSsZ3EXd4"
+        }
+      ]
+    },
+    {
+      "txHash": "2CWydt2H1uYrhg5w2FJGb6XckHMtu66acTYcUiviGfXVA2DZyU8mgsGWvjF3uuPDRGtaetWkaiCTNquSCnuwHjJb",
+      "source": "own",
+      "case": "kamino-03-borrow-usdc",
+      "notes": "borrow USDC \u2014 BorrowObligationLiquidityV2 (received side)",
+      "wallet": "HT2yaxCEtvr8UMHnQb9LKZre81v7S9cKRgrqSsZ3EXd4",
+      "expectedStatus": "decoded",
+      "expectedEvents": [
+        {
+          "type": "lend_borrow",
+          "subtype": "borrow",
+          "receivedAsset": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+          "receivedAmount": "130000000",
+          "logIndex": 5,
+          "emissionSeq": 0,
+          "timestamp": 1782548180,
+          "wallet": "HT2yaxCEtvr8UMHnQb9LKZre81v7S9cKRgrqSsZ3EXd4"
+        }
+      ]
+    },
+    {
+      "txHash": "2tcL13Z2zP7rstbjM4jxX1hXsDBQhW7raHFyVhrj6mza6DKJwQKvm1LPFN6idGRCW6KcRDpp42S1fUV78UATar8",
+      "source": "own",
+      "case": "kamino-04-flash-leverage",
+      "notes": "leveraged loop: FlashBorrow/FlashRepayReserveLiquidity + embedded DEX swaps + supply + borrow. Carries untracked swaps -> must go to the manual queue (unclassified), never a lending-only partial decode.",
+      "wallet": "HT2yaxCEtvr8UMHnQb9LKZre81v7S9cKRgrqSsZ3EXd4",
+      "expectedStatus": "unclassified",
+      "expectedEvents": []
+    },
+    {
+      "txHash": "uijWy4BpfMKPgQNKTCfhuB7PpXpt2ZKuHYZnpsHCyJ31iM9nHEE8PsSKDZaGadJV7bf6zCYUFivkbWVyxA7hm4d",
+      "source": "own",
+      "case": "kamino-05-init-metadata-skip",
+      "notes": "Kamino account setup (CreateLookupTable + InitUserMetadata) \u2014 no financial leg -> skip",
+      "wallet": "HT2yaxCEtvr8UMHnQb9LKZre81v7S9cKRgrqSsZ3EXd4",
+      "expectedStatus": "skipped",
+      "expectedEvents": []
+    }
+  ]
+}
