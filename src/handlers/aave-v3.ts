@@ -1,4 +1,4 @@
-import { dataWord, topicAddress } from '../chains/base/log-utils';
+import { dataWord, erc20Transfers, parseLog, topicAddress } from '../chains/base/log-utils';
 import { asBaseRawJson, type BaseRawJson, type RawRpcLog } from '../chains/base/raw-json';
 import { baseTokenSymbol } from '../chains/base/tokens';
 import type { DecodeContext, DecodeResult, Handler, RawTx } from '../decoder/types';
@@ -41,10 +41,18 @@ import type { Chain, TaxEvent } from '../types/event';
  * legs batched into the same receipt. All-foreign txs return `skip`, not
  * `unclassified`, so swap handlers / generic rules still own the tx.
  *
- * Not in MVP (absent from own history and fixtures): WrappedTokenGatewayV3
- * native-ETH flows (the Pool party is the gateway contract → skipped),
- * aToken-funded repays (`useATokens=true` — still decoded as a plain repay),
- * RewardsController incentive claims, and FlashLoan premiums.
+ * Router/gateway-mediated spend legs (fixture 06): withdrawing WETH→native ETH
+ * via the WrappedTokenGatewayV3, or a withdraw/repay routed through an
+ * aggregator, makes the Pool log name the ROUTER as `user` — not Felix — even
+ * though the position is his. These are re-attributed to the owner when the
+ * SAME receipt carries an owner-sent ERC-20 transfer of the EXACT leg amount
+ * (the owner's aToken funding a withdraw, or debt token funding a repay) — the
+ * same exact-value evidence the aerodrome/morpho handlers use. Borrow/supply
+ * legs are never re-attributed (they already name onBehalfOf = the owner), so
+ * a foreign swap through a wrapper with no owner-sent leg still skips.
+ *
+ * Not in MVP (absent from own history and fixtures): RewardsController
+ * incentive claims and FlashLoan premiums.
  */
 
 /** Aave V3 Pool on Base (= `AaveV3Base.POOL` in @bgd-labs/aave-address-book; verified against the fixture receipts). */
@@ -98,6 +106,26 @@ export class AaveV3Handler implements Handler {
     /** Empty owner set (no wallets configured) disables filtering. */
     const isOwner = (party: string): boolean => owners.size === 0 || owners.has(party);
 
+    // Owner-sent ERC-20 amounts in this receipt → the owner that sent them.
+    // A router/gateway-mediated withdraw/repay names the router as Pool `user`,
+    // but the owner funds it with a same-value aToken/debt-token transfer; that
+    // exact-value owner-sent leg re-attributes the event to its true owner.
+    const ownerSentAmounts = new Map<bigint, string>();
+    if (owners.size > 0) {
+      for (const t of erc20Transfers(rawJson.receipt.logs.map(parseLog))) {
+        if (owners.has(t.from) && t.value > 0n && !ownerSentAmounts.has(t.value)) {
+          ownerSentAmounts.set(t.value, t.from);
+        }
+      }
+    }
+    /** The funding amount of a spend-side leg (received side is never re-attributed). */
+    const spendAmount = (event: TaxEvent): bigint | undefined =>
+      event.type === 'lend_supply' && event.subtype === 'withdraw'
+        ? event.receivedAmount
+        : event.type === 'lend_borrow' && event.subtype === 'repay'
+          ? event.sentAmount
+          : undefined;
+
     const events: TaxEvent[] = [];
     let skippedNonOwner = false;
 
@@ -106,8 +134,15 @@ export class AaveV3Handler implements Handler {
       const decoded = this.decodePoolLog(raw, log);
       if (decoded === undefined) continue;
       if (!isOwner(decoded[0]!.wallet)) {
-        skippedNonOwner = true;
-        continue;
+        // Router/gateway-mediated withdraw/repay: re-attribute to the owner who
+        // funded the exact amount; otherwise it is genuinely not ours.
+        const amount = spendAmount(decoded[0]!);
+        const funder = amount === undefined ? undefined : ownerSentAmounts.get(amount);
+        if (funder === undefined) {
+          skippedNonOwner = true;
+          continue;
+        }
+        for (const event of decoded) event.wallet = funder;
       }
       events.push(...decoded);
     }
