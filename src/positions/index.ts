@@ -22,3 +22,6 @@ export {
   syncPositionsForEvents,
 } from './repo';
 export type { ListPositionsOptions, PositionInsert, PositionRow, RebuildResult } from './repo';
+
+export { reduceLendingPosition } from './lending';
+export type { LendingPositionSnapshot, LendingPositionState } from './lending';

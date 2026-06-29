@@ -37,6 +37,8 @@ export interface PositionEventInput {
   receivedAsset?: string | null;
   receivedAmount?: bigint | null;
   positionId?: string | null;
+  /** Non-destructive annotations (e.g. `auto_compounded`). Used by the lending reducer; LP tracker ignores it. */
+  flags?: readonly string[] | null;
 }
 
 export type PositionStatus = 'open' | 'closed';
