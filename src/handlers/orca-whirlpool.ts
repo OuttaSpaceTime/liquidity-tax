@@ -52,6 +52,7 @@ const POSITION_ACCOUNT_INDEX: Readonly<Record<string, number>> = {
   OpenPositionWithTokenExtensions: 2,
   IncreaseLiquidity: 3,
   IncreaseLiquidityV2: 5,
+  IncreaseLiquidityByTokenAmountsV2: 5,
   DecreaseLiquidity: 3,
   DecreaseLiquidityV2: 5,
   CollectFees: 2,
@@ -76,7 +77,14 @@ const SWAP_VAULT_INDEXES: Readonly<Record<string, readonly number[]>> = {
 
 const OPEN_NAMES = new Set(Object.keys(POSITION_ACCOUNT_INDEX).filter((n) => n.startsWith('Open')));
 const CLOSE_NAMES = new Set(['ClosePosition', 'ClosePositionWithTokenExtensions']);
-const INCREASE_NAMES = new Set(['IncreaseLiquidity', 'IncreaseLiquidityV2']);
+// IncreaseLiquidityByTokenAmountsV2: a token-amount-specified liquidity add
+// (vs liquidity-unit), identical account layout + CPI transfer legs as
+// IncreaseLiquidityV2 — decoded the same way.
+const INCREASE_NAMES = new Set([
+  'IncreaseLiquidity',
+  'IncreaseLiquidityV2',
+  'IncreaseLiquidityByTokenAmountsV2',
+]);
 const DECREASE_NAMES = new Set(['DecreaseLiquidity', 'DecreaseLiquidityV2']);
 const COLLECT_FEES_NAMES = new Set(['CollectFees', 'CollectFeesV2']);
 const COLLECT_REWARD_NAMES = new Set(['CollectReward', 'CollectRewardV2']);

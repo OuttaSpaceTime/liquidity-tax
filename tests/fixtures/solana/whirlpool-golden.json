@@ -1,7 +1,7 @@
 {
   "conventions": {
     "scope": "[1B.4] hand-labeled golden fixtures for the Orca Whirlpool handler ([1B.3]). Raw txs live in raw/<txHash>.json as full raw_txs rows (jsonParsed getTransaction payload).",
-    "logIndex": "Zero-based index of the source instruction in the flattened sequence (each outer instruction followed by its inner CPI instructions, in order — mirrors flattenTransactionResponse from solana-tx-parser-public). Events derived from a Whirlpool instruction carry that instruction's flat index.",
+    "logIndex": "Zero-based index of the source instruction in the flattened sequence (each outer instruction followed by its inner CPI instructions, in order \u2014 mirrors flattenTransactionResponse from solana-tx-parser-public). Events derived from a Whirlpool instruction carry that instruction's flat index.",
     "emissionSeq": "Zero-based ordinal among the events emitted for one source instruction, in inner-transfer order (token A leg before token B leg). Zero-amount legs are skipped and do not consume an ordinal.",
     "asset": "SPL mint address verbatim (wrapped SOL = So11111111111111111111111111111111111111112; no unwrap to native SOL at handler level). Native SOL is only used by ingest-time gas events.",
     "amounts": "Raw integer base units as decimal strings; the test parses them to bigint.",
@@ -11,19 +11,19 @@
       "increaseLiquidity / increaseLiquidityV2": "one lp_deposit:add_liquidity per non-zero token leg, sent side only",
       "decreaseLiquidity / decreaseLiquidityV2": "one lp_withdraw:remove_liquidity per non-zero token leg, received side only",
       "collectFees / collectFeesV2": "one lp_fee:collect per non-zero token leg, received side only",
-      "collectReward / collectRewardV2": "one lp_reward:emission_claim per non-zero leg, received side only — zero-amount reward transfers (all of this wallet's history) emit NOTHING",
+      "collectReward / collectRewardV2": "one lp_reward:emission_claim per non-zero leg, received side only \u2014 zero-amount reward transfers (all of this wallet's history) emit NOTHING",
       "closePosition / closePositionWithTokenExtensions": "one lp_withdraw:close_position event, no amounts (NFT burn + rent refund are not principal)",
       "updateFeesAndRewards": "no event (pure state update)",
       "swap / swapV2": "one swap:trade event with both sides (sent = user->vault leg, received = vault->user leg)",
       "twoHopSwap / twoHopSwapV2": "one swap:trade event with net sides (input of hop 1, output of hop 2); the intermediate token nets to zero and is not emitted"
     },
-    "ephemeralWsol": "Temp WSOL accounts (createAccount + initializeAccount before, closeAccount after the Whirlpool ix) are plumbing — the handler reads amounts from the SPL transfer legs only and emits no wrap/unwrap events.",
-    "v1TransferMintResolution": "spl-token:transfer (V1 instructions) carries no mint — resolve via meta.pre/postTokenBalances account->mint mapping; transferChecked (V2) carries the mint inline.",
+    "ephemeralWsol": "Temp WSOL accounts (createAccount + initializeAccount before, closeAccount after the Whirlpool ix) are plumbing \u2014 the handler reads amounts from the SPL transfer legs only and emits no wrap/unwrap events.",
+    "v1TransferMintResolution": "spl-token:transfer (V1 instructions) carries no mint \u2014 resolve via meta.pre/postTokenBalances account->mint mapping; transferChecked (V2) carries the mint inline.",
     "handler": "handlerId must be 'orca_whirlpool' on every event; handlerVersion is not asserted.",
     "notCovered": [
       "Position NFT transfer between wallets: no position mint in this wallet's history was ever transferred; no foreign example findable without an indexer (Whirlpool program is not an account of such txs). Revisit in [1B.3]/[1D].",
       "Non-zero collectReward: all 93 own CollectReward transfers AND ~900 sampled recent foreign Whirlpool txs have zero-amount reward transfers (emissions inactive program-wide). The zero-amount no-emit behavior is pinned by fixtures #6-#8; the non-zero path (lp_reward:emission_claim) remains unexercised.",
-      "Single-tx rebalance (decrease+collect+close+open+increase in one tx): does not occur in this history — the Orca UI rebalances as a close tx followed by an open tx (fixtures #0/#1 and #4/#5/#9 cover the pieces). Cross-tx rebalance linking is phase-3 aggregation work.",
+      "Single-tx rebalance (decrease+collect+close+open+increase in one tx): does not occur in this history \u2014 the Orca UI rebalances as a close tx followed by an open tx (fixtures #0/#1 and #4/#5/#9 cover the pieces). Cross-tx rebalance linking is phase-3 aggregation work.",
       "Position bundles, locked positions, repositionLiquidityV2: never used by this wallet."
     ],
     "layout": "Layout divergence (documented, accepted): solana splits raw payloads into raw/<signature>.json plus this single manifest of expectations; base and sui use one self-describing <protocol>-NN-<description>.json per tx with raw payload + expected events inline. New Solana fixtures should converge on the per-tx convention used by base/sui."
@@ -73,7 +73,7 @@
       "txHash": "wYcczFGajrdtjejo9u8KFcJiHZ2BG8FMMcA71gm6WZM2GRdhqyvuX7JQXTxWLt3BHdK6E9Gqjykw4vp6S1GwiKP",
       "source": "own",
       "case": "open + increaseV2 single-sided (WSOL/hSOL, token A leg is zero)",
-      "notes": "OpenPositionWithTokenExtensions@3 (PDA 2qVGGt81...); IncreaseLiquidityV2@21 with transferChecked legs: WSOL @22 amount 0 (omitted — single-sided deposit), hSOL @23. Pins the zero-leg-skip rule.",
+      "notes": "OpenPositionWithTokenExtensions@3 (PDA 2qVGGt81...); IncreaseLiquidityV2@21 with transferChecked legs: WSOL @22 amount 0 (omitted \u2014 single-sided deposit), hSOL @23. Pins the zero-leg-skip rule.",
       "wallet": "HT2yaxCEtvr8UMHnQb9LKZre81v7S9cKRgrqSsZ3EXd4",
       "expectedEvents": [
         {
@@ -132,7 +132,7 @@
     {
       "txHash": "2QjyicHtNRW8y9SDifKgcmi7g9ik3xZLtPSWwVhfHaNER1KeuL2iZmXqH7XXCS49Gik7sfpWXH1tnVjzPmzE2gDy",
       "source": "own",
-      "case": "partial close — decrease without closePosition (SOL/USDC)",
+      "case": "partial close \u2014 decrease without closePosition (SOL/USDC)",
       "notes": "Standalone DecreaseLiquidity@5 on position 84VVGAnh... which stays open (same position is harvested later in fixture #6). Legs @6 WSOL, @7 USDC, received side.",
       "wallet": "HT2yaxCEtvr8UMHnQb9LKZre81v7S9cKRgrqSsZ3EXd4",
       "expectedEvents": [
@@ -392,7 +392,7 @@
       "txHash": "28k3Uv36jakimJ99i7Jq6Tp9zGJkAyy5jFHRprhcexoNTC68gNMoBfyGkWDbzZvwBNKntGuuV75thA6TQ7Bag8Rp",
       "source": "own",
       "case": "close without collectFees, single-sided decrease (out-of-range close)",
-      "notes": "DecreaseLiquidity@5 with WSOL leg @6 amount 0 (omitted) and USDC leg @7; ClosePositionWithTokenExtensions@8, no CollectFees ix. Same position 8eKMieua... as fixture #8, closed 93s after the harvest — together they pin a cross-tx rebalance-style lifecycle.",
+      "notes": "DecreaseLiquidity@5 with WSOL leg @6 amount 0 (omitted) and USDC leg @7; ClosePositionWithTokenExtensions@8, no CollectFees ix. Same position 8eKMieua... as fixture #8, closed 93s after the harvest \u2014 together they pin a cross-tx rebalance-style lifecycle.",
       "wallet": "HT2yaxCEtvr8UMHnQb9LKZre81v7S9cKRgrqSsZ3EXd4",
       "expectedEvents": [
         {
@@ -456,6 +456,37 @@
           "sentAmount": "265430143",
           "receivedAsset": "So11111111111111111111111111111111111111112",
           "receivedAmount": "1775264110"
+        }
+      ]
+    },
+    {
+      "txHash": "5rkK32B1EgHgmkDrnsSeo9y3jy5PLx96YjAtW4BBDYZie5nbHHB7vMCKSqYpXuiacnNjKRYfFWpivRkbMwN9h69f",
+      "source": "own",
+      "case": "increaseLiquidityByTokenAmountsV2 add on existing position (SOL/USDC)",
+      "notes": "Real own tx: IncreaseLiquidityByTokenAmountsV2 (a token-amount-specified liquidity add, same account layout + CPI transfer legs as IncreaseLiquidityV2 \u2014 position account at index 5). Previously unhandled -> whole tx unclassified -> the open SOL/USDC position 9WKtW4Ny lost its deposited basis. Two deposit legs (WSOL then USDC) into the pool vaults.",
+      "wallet": "HT2yaxCEtvr8UMHnQb9LKZre81v7S9cKRgrqSsZ3EXd4",
+      "expectedEvents": [
+        {
+          "type": "lp_deposit",
+          "subtype": "add_liquidity",
+          "logIndex": 5,
+          "emissionSeq": 0,
+          "timestamp": 1782546763,
+          "wallet": "HT2yaxCEtvr8UMHnQb9LKZre81v7S9cKRgrqSsZ3EXd4",
+          "sentAsset": "So11111111111111111111111111111111111111112",
+          "sentAmount": "1433858459",
+          "positionId": "solana:orca_whirlpool:9WKtW4NyRj6HJeET3EdoNuhp5tGYQUu7UyUoWvrUFzb7"
+        },
+        {
+          "type": "lp_deposit",
+          "subtype": "add_liquidity",
+          "logIndex": 5,
+          "emissionSeq": 1,
+          "timestamp": 1782546763,
+          "wallet": "HT2yaxCEtvr8UMHnQb9LKZre81v7S9cKRgrqSsZ3EXd4",
+          "sentAsset": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+          "sentAmount": "92060451",
+          "positionId": "solana:orca_whirlpool:9WKtW4NyRj6HJeET3EdoNuhp5tGYQUu7UyUoWvrUFzb7"
         }
       ]
     }
