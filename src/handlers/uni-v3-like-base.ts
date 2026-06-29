@@ -86,13 +86,21 @@ export abstract class UniV3LikeHandler implements Handler {
   matches(raw: RawTx): boolean {
     const receipt = this.rawJson(raw)?.receipt;
     if (receipt === undefined) return false;
-    return receipt.logs.some(
-      (log) =>
-        log.address.toLowerCase() === this.positionManager &&
-        (log.topics[0] === INCREASE_LIQUIDITY_TOPIC ||
-          log.topics[0] === DECREASE_LIQUIDITY_TOPIC ||
-          log.topics[0] === COLLECT_TOPIC),
-    );
+    return receipt.logs.some((log) => {
+      if (log.address.toLowerCase() !== this.positionManager) return false;
+      const topic0 = log.topics[0];
+      if (
+        topic0 === INCREASE_LIQUIDITY_TOPIC ||
+        topic0 === DECREASE_LIQUIDITY_TOPIC ||
+        topic0 === COLLECT_TOPIC
+      ) {
+        return true;
+      }
+      // A bare position-NFT burn (ERC-721 Transfer to the zero address, no
+      // liquidity event) is the close signal for a position whose liquidity
+      // was removed in an EARLIER tx — match it so the close gets recorded.
+      return topic0 === TRANSFER_TOPIC && log.topics.length === 4 && log.topics[2] === ZERO_TOPIC;
+    });
   }
 
   /** Decode is context-free: ownership is implicit (only owner txs are ingested). */
@@ -277,14 +285,16 @@ export abstract class UniV3LikeHandler implements Handler {
         }
       }
 
-      // fee legs at the Collect log: collect − principal
-      const feeAmounts: LegAmounts = {
-        amount0: collectTotals.amount0 - decreaseTotals.amount0,
-        amount1: collectTotals.amount1 - decreaseTotals.amount1,
-      };
-      if (feeAmounts.amount0 < 0n || feeAmounts.amount1 < 0n) {
+      // fee legs at the Collect log: collect − principal. Slipstream/V3 can
+      // report a Collect a few wei BELOW the same-tx DecreaseLiquidity
+      // (rounding); clamp that dust to a zero fee instead of discarding the
+      // whole tx. A non-dust deficit is a real anomaly — still bail.
+      const fee0 = clampFeeDust(collectTotals.amount0, decreaseTotals.amount0);
+      const fee1 = clampFeeDust(collectTotals.amount1, decreaseTotals.amount1);
+      if (fee0 === undefined || fee1 === undefined) {
         return `${this.id}: Collect amounts smaller than DecreaseLiquidity amounts (tokenId ${group.tokenId}) — fee split impossible`;
       }
+      const feeAmounts: LegAmounts = { amount0: fee0, amount1: fee1 };
       // A Collect with no same-tx DecreaseLiquidity is USUALLY a pure fee
       // harvest, but it also pays out tokensOwed of a decrease from an EARLIER
       // tx (which decoded to unclassified — see above). The fee/principal
@@ -311,6 +321,26 @@ export abstract class UniV3LikeHandler implements Handler {
           handlerVersion: this.version,
         });
       }
+    }
+
+    // A position-NFT burn is the close — even without a same-tx
+    // DecreaseLiquidity (liquidity removed in an earlier tx, or only a fee
+    // Collect in the burn tx). Emit a zero-amount close marker so the lifecycle
+    // closes; skip when a DecreaseLiquidity leg already carried close_position.
+    if (group.burned !== undefined && !events.some((e) => e.subtype === 'close_position')) {
+      events.push({
+        type: 'lp_withdraw',
+        subtype: 'close_position',
+        chain: this.chain,
+        txHash: raw.txHash,
+        logIndex: group.burned.logIndex,
+        emissionSeq: 0,
+        timestamp: raw.blockTimestamp,
+        wallet: resolveWallet(topicAddress(group.burned.topics[1]!)),
+        positionId,
+        handlerId: this.id,
+        handlerVersion: this.version,
+      });
     }
 
     return events;
@@ -372,9 +402,13 @@ export abstract class UniV3LikeHandler implements Handler {
         else if (log.topics[2] === ZERO_TOPIC) groupFor(tokenId).burned = log;
       }
     }
-    // Drop NFT-only groups (e.g. plain position transfers — no NPM liquidity event).
+    // Keep groups with a liquidity event, OR a bare NFT burn (the close signal
+    // for a position whose liquidity left in an earlier tx). Plain position
+    // transfers (neither minted nor burned set) are still dropped.
     return [...groups.values()].filter(
-      (g) => g.increases.length + g.decreases.length + g.collects.length > 0,
+      (g) =>
+        g.increases.length + g.decreases.length + g.collects.length > 0 ||
+        g.burned !== undefined,
     );
   }
 }
@@ -404,6 +438,17 @@ function sumAmounts(logs: ParsedLog[]): LegAmounts {
 }
 
 /**
+ * collect − decrease, clamped to 0 when a Collect rounds a few wei below the
+ * same-tx DecreaseLiquidity (Slipstream/V3 rounding). Returns `undefined` for a
+ * non-dust deficit (> 1e-6 of the decrease) — a real anomaly the caller bails on.
+ */
+function clampFeeDust(collect: bigint, decrease: bigint): bigint | undefined {
+  const fee = collect - decrease;
+  if (fee >= 0n) return fee;
+  return -fee <= decrease / 1_000_000n ? 0n : undefined;
+}
+
+/**
  * Recover (token0, token1) addresses by matching NPM event amounts against the
  * receipt's ERC-20 Transfer values: claim, in log order, the first unclaimed
  * transfer matching amount0, then amount1 (the pool moves token0 before
@@ -428,12 +473,26 @@ function matchTransferPair(
     }
   | undefined {
   const take = (value: bigint, counterparty: string | undefined): Erc20Transfer | undefined => {
-    const match = transfers.find(
-      (t) =>
-        !claimed.has(t.logIndex) &&
-        t.value === value &&
-        (counterparty === undefined || side(t) === counterparty),
-    );
+    const eligible = (t: Erc20Transfer): boolean =>
+      !claimed.has(t.logIndex) && (counterparty === undefined || side(t) === counterparty);
+    let match = transfers.find((t) => eligible(t) && t.value === value);
+    if (match === undefined) {
+      // Dust fallback: Slipstream/V3 can report an NPM event amount a few wei
+      // off the actual ERC-20 Transfer. Accept the closest eligible transfer
+      // within ~1e-6 of the event amount — token legs differ by orders of
+      // magnitude, so this never crosses legs. Identification only: the emitted
+      // leg amount stays the authoritative NPM event amount.
+      const tolerance = value / 1_000_000n;
+      let bestDiff: bigint | undefined;
+      for (const t of transfers) {
+        if (!eligible(t)) continue;
+        const diff = t.value > value ? t.value - value : value - t.value;
+        if (diff <= tolerance && (bestDiff === undefined || diff < bestDiff)) {
+          match = t;
+          bestDiff = diff;
+        }
+      }
+    }
     if (match !== undefined) claimed.add(match.logIndex);
     return match;
   };
