@@ -2,12 +2,7 @@ import 'server-only';
 import { eq, isNull, sql } from 'drizzle-orm';
 import { db } from './db';
 import { events, positions, rawTxs, transferLinks, unclassified } from '@db/schema';
-import {
-  listPositions,
-  positionState,
-  getPosition,
-  type PositionRow,
-} from '@lt/positions/repo';
+import { listPositions, getPosition, type PositionRow } from '@lt/positions/repo';
 import {
   recentActivity,
   getEventsByPosition,
@@ -20,7 +15,8 @@ import { getPricesForPairs, getLatestPrices, priceKey } from '@lt/prices/repo';
 import type { PriceRow } from '@lt/prices/repo';
 import { utcDateOf } from '@lt/prices/dates';
 import type { Chain, TaxEventType } from '@lt/types/event';
-import type { AssetTotals } from '@lt/positions/tracker';
+import { isLpPositionState, type AssetTotals, type PositionState } from '@lt/positions/tracker';
+import { lendingStateToLp, positionDebt, type LendingPositionState } from '@lt/positions/lending';
 import { assetDecimals, assetSymbol, daysBetween, daysUntilTaxFree } from './format';
 import { eventVerb, protocolOf, INCOME_TYPES, type EventVerb } from './taxonomy';
 import { walletLabelMap, labelFor, type WalletInfo } from './wallet-labels';
@@ -59,6 +55,7 @@ export interface PositionDTO {
   principal: AmountDTO[];
   deposited: AmountDTO[];
   withdrawn: AmountDTO[];
+  debt: AmountDTO[]; // lending only: live net debt (empty for LP)
   feesCollected: AmountDTO[];
   rewardsCollected: AmountDTO[];
   warnings: string[];
@@ -158,7 +155,15 @@ function sumEurLenient(amounts: AmountDTO[]): number | null {
 // Positions
 // ---------------------------------------------------------------------------
 
-function assetsOfState(s: ReturnType<typeof positionState>): string[] {
+/** LP-shaped state for any position row — lending rows are projected onto it. */
+function lpStateOf(row: PositionRow): PositionState {
+  const state = row.stateJson;
+  return isLpPositionState(state)
+    ? state
+    : lendingStateToLp(state as unknown as LendingPositionState);
+}
+
+function assetsOfState(s: PositionState): string[] {
   return [
     ...Object.keys(s.principal),
     ...Object.keys(s.feesCollected),
@@ -175,8 +180,9 @@ function toPositionDTO(
   now: number,
 ): PositionDTO {
   const chain = row.chain as Chain;
-  const s = positionState(row);
+  const s = lpStateOf(row);
   const principal = totalsToAmounts(chain, s.principal, latest);
+  const debt = totalsToAmounts(chain, positionDebt(row.stateJson ?? {}), latest);
   const est = sumEur(principal);
   const harvested = [
     ...totalsToAmounts(chain, s.feesCollected, latest),
@@ -198,6 +204,7 @@ function toPositionDTO(
     principal,
     deposited: totalsToAmounts(chain, s.deposited, latest),
     withdrawn: totalsToAmounts(chain, s.withdrawn, latest),
+    debt,
     feesCollected: totalsToAmounts(chain, s.feesCollected, latest),
     rewardsCollected: totalsToAmounts(chain, s.rewardsCollected, latest),
     warnings: s.warnings,
@@ -212,7 +219,7 @@ function toPositionDTO(
 async function decoratePositions(rows: PositionRow[]): Promise<PositionDTO[]> {
   const labels = await walletLabelMap();
   const assets = new Set<string>();
-  for (const row of rows) for (const a of assetsOfState(positionState(row))) assets.add(a);
+  for (const row of rows) for (const a of assetsOfState(lpStateOf(row))) assets.add(a);
   const latest = getLatestPrices(db, [...assets]);
   const now = nowSeconds();
   return rows.map((row) => toPositionDTO(row, labels, latest, now));

@@ -41,6 +41,12 @@ export function PositionCard({ position: p }: { position: PositionDTO }) {
       <div className="rows">
         <span className="k">Principal</span>
         <Amounts items={p.principal} />
+        {p.debt.length > 0 && (
+          <>
+            <span className="k">Debt</span>
+            <Amounts items={p.debt} />
+          </>
+        )}
         {p.feesCollected.length > 0 && (
           <>
             <span className="k">Fees</span>

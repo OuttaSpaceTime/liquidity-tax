@@ -1,5 +1,5 @@
-import type { AssetTotals, PositionEventInput } from './tracker';
-import { comparePositionEvents } from './tracker';
+import type { AssetTotals, PositionEventInput, PositionState } from './tracker';
+import { comparePositionEvents, isLpPositionState } from './tracker';
 
 /**
  * Lending-position lifecycle reducer (WS2).
@@ -61,6 +61,39 @@ export interface LendingPositionSnapshot {
   openedAt: number;
   closedAt: number | null;
   state: LendingPositionState;
+}
+
+/**
+ * Live net debt for any position state — a lending position's `netDebt`, empty
+ * for an LP position (no debt leg). Surfaced separately because the LP
+ * `PositionState` shape lendingStateToLp targets has no field for it.
+ */
+export function positionDebt(state: Record<string, unknown>): AssetTotals {
+  return isLpPositionState(state) ? {} : (state as LendingPositionState).netDebt;
+}
+
+/**
+ * Project a lending state onto the LP `PositionState` shape so the dashboard's
+ * position views can render both from one code path: net collateral reads as
+ * principal, supplied/withdrawn as the deposit/withdraw legs, and claimed
+ * rewards as reward income. Debt has no LP-side field; surface it via
+ * positionDebt() alongside the projected state.
+ */
+export function lendingStateToLp(s: LendingPositionState): PositionState {
+  return {
+    status: s.status,
+    deposited: s.supplied,
+    withdrawn: s.withdrawn,
+    principal: s.netCollateral,
+    feesCollected: {},
+    rewardsCollected: s.rewardsClaimed,
+    eventCount: s.eventCount,
+    lastEventAt: s.lastEventAt,
+    openTxHash: null,
+    closeTxHash: null,
+    inferredOpen: false,
+    warnings: s.warnings,
+  };
 }
 
 /**

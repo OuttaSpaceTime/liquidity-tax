@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { reduceLendingPosition } from '../../src/positions/lending';
-import type { PositionEventInput } from '../../src/positions/tracker';
+import { lendingStateToLp, positionDebt, reduceLendingPosition } from '../../src/positions/lending';
+import { isLpPositionState, type PositionEventInput } from '../../src/positions/tracker';
 
 /**
  * Lending-position lifecycle reducer (WS2). Balance-based open/close: open
@@ -117,5 +117,37 @@ describe('reduceLendingPosition', () => {
     ])!;
     expect(snap.state.status).toBe('open');
     expect(snap.state.rewardsClaimed).toEqual({ MORPHO: '7' });
+  });
+});
+
+describe('lendingStateToLp — adapter to LP-shaped state for rendering', () => {
+  test('maps collateral/supply/rewards onto LP position fields', () => {
+    const snap = reduceLendingPosition(PID, 'base', 'morpho', 'W', [
+      ev({ type: 'lend_supply', subtype: 'deposit', sentAsset: 'WETH', sentAmount: 1_000n }),
+      ev({ type: 'lend_supply', subtype: 'withdraw', receivedAsset: 'WETH', receivedAmount: 200n }),
+      ev({ type: 'lend_reward', subtype: 'claim', receivedAsset: 'MORPHO', receivedAmount: 7n }),
+    ])!;
+    const lp = lendingStateToLp(snap.state);
+    expect(isLpPositionState(lp)).toBe(true);
+    expect(lp.status).toBe('open');
+    expect(lp.deposited).toEqual({ WETH: '1000' });
+    expect(lp.withdrawn).toEqual({ WETH: '200' });
+    expect(lp.principal).toEqual({ WETH: '800' });
+    expect(lp.feesCollected).toEqual({});
+    expect(lp.rewardsCollected).toEqual({ MORPHO: '7' });
+  });
+});
+
+describe('positionDebt — live net debt for a position row', () => {
+  test('returns net debt for a lending state', () => {
+    const snap = reduceLendingPosition(PID, 'solana', 'kamino', 'W', [
+      ev({ type: 'lend_supply', subtype: 'deposit', sentAsset: 'SOL', sentAmount: 4_000_000_000n }),
+      ev({ type: 'lend_borrow', subtype: 'borrow', receivedAsset: 'USDC', receivedAmount: 130_000_000n }),
+    ])!;
+    expect(positionDebt(snap.state)).toEqual({ USDC: '130000000' });
+  });
+
+  test('returns {} for an LP state (no debt concept)', () => {
+    expect(positionDebt({ principal: { WETH: '800' } })).toEqual({});
   });
 });

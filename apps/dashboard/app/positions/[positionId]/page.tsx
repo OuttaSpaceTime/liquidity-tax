@@ -57,6 +57,12 @@ export default async function PositionDetailPage({
             <Amounts items={p.withdrawn} />
             <span className="k faint">principal</span>
             <Amounts items={p.principal} />
+            {p.debt.length > 0 && (
+              <>
+                <span className="k faint">debt</span>
+                <Amounts items={p.debt} />
+              </>
+            )}
             <span className="k faint">fees</span>
             <Amounts items={p.feesCollected} />
             <span className="k faint">rewards</span>

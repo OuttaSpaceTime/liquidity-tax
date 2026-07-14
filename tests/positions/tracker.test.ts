@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'bun:test';
 import {
   groupEventsByPosition,
+  isLpPositionState,
   parsePositionId,
   reducePositionEvents,
 } from '../../src/positions/tracker';
@@ -32,6 +33,26 @@ describe('parsePositionId', () => {
     expect(() => parsePositionId('uniswap_v3:123')).toThrow();
     expect(() => parsePositionId('base::123')).toThrow();
     expect(() => parsePositionId('base:uniswap_v3:')).toThrow();
+  });
+});
+
+describe('isLpPositionState — discriminates LP vs lending state', () => {
+  it('is true for an LP position state (has principal)', () => {
+    const snap = reducePositionEvents(UNI_POS, uniLifecycle())!;
+    expect(isLpPositionState(snap.state)).toBe(true);
+  });
+
+  it('is false for a lending position state (no principal)', () => {
+    const lending = {
+      status: 'open',
+      supplied: {},
+      withdrawn: {},
+      borrowed: {},
+      repaid: {},
+      netCollateral: {},
+      netDebt: {},
+    };
+    expect(isLpPositionState(lending)).toBe(false);
   });
 });
 

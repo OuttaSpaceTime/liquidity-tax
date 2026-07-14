@@ -72,6 +72,16 @@ export type PositionState = {
   warnings: string[];
 };
 
+/**
+ * Discriminates an LP `PositionState` from a lending `LendingPositionState`
+ * (see src/positions/lending.ts) — both share the `positions` table but only
+ * LP state carries `principal`. Consumers that read LP-only fields must gate on
+ * this to avoid touching a lending row's differently-shaped state_json.
+ */
+export function isLpPositionState(state: unknown): state is PositionState {
+  return typeof state === 'object' && state !== null && 'principal' in state;
+}
+
 /** Row-shaped reduction result, ready for the `positions` table. */
 export interface PositionSnapshot {
   positionId: string;
